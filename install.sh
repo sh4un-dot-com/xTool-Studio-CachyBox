@@ -12,10 +12,14 @@ echo -e "xTool Studio Cachy Box Installer (Universal Bash)"
 echo -e "${BLUE}--------------------------------------------------------${NC}"
 
 # --- CLI options & Logging ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$HOME/.cache/xtool-studio-cachy-box"
+SETUP_DIR="$LOG_DIR"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install.log"
 LAST_STEP_FILE="$LOG_DIR/last_failed_step"
+CONTAINER_SETUP_SRC="$SCRIPT_DIR/scripts/container-setup.sh"
+LAUNCHER_SRC="$SCRIPT_DIR/scripts/xtool-studio-launcher.sh"
 
 log(){
     local level="$1"; shift
@@ -229,15 +233,33 @@ preflight(){
 }
 
 
-run_in_container(){
-    # run command in distrobox container and stream output to log
-    local cmd="$*"
+# Distrobox 1.7 (Ubuntu/Zorin) eval's the enter command with /bin/sh (dash).
+# Never pass multiline scripts or paths with parentheses through this helper.
+enter_container(){
     if [ "$DRY_RUN" = true ]; then
-        log "INFO" "DRY RUN: would run in container: $cmd"
+        log "INFO" "DRY RUN: would run in container: distrobox enter --no-workdir $CONTAINER_NAME -- $*"
         return 0
     fi
-    distrobox enter "$CONTAINER_NAME" -- bash -lc "$cmd" 2>&1 | tee -a "$LOG_FILE"
+    distrobox enter --no-workdir "$CONTAINER_NAME" -- "$@" 2>&1 | tee -a "$LOG_FILE"
     return ${PIPESTATUS[0]:-0}
+}
+
+prepare_container_setup(){
+    if [ ! -f "$CONTAINER_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ]; then
+        fail "Missing installer scripts in $SCRIPT_DIR/scripts. Re-clone the repository and retry."
+    fi
+
+    mkdir -p "$SETUP_DIR"
+    cp -f "$CONTAINER_SETUP_SRC" "$SETUP_DIR/container-setup.sh"
+    cp -f "$LAUNCHER_SRC" "$SETUP_DIR/xtool-studio-launcher.sh"
+    chmod 0755 "$SETUP_DIR/container-setup.sh" "$SETUP_DIR/xtool-studio-launcher.sh"
+
+    {
+        printf 'XTOOL_URL=%q\n' "$XTOOL_URL"
+        printf 'XTOOL_FORCE_SOFTWARE_RENDERING=%q\n' "$XTOOL_FORCE_SOFTWARE_RENDERING"
+        printf 'XTOOL_LAUNCHER_SRC=%q\n' "$SETUP_DIR/xtool-studio-launcher.sh"
+        printf 'XTOOL_SETUP_DIR=%q\n' "$SETUP_DIR"
+    } > "$SETUP_DIR/container-setup.env"
 }
 
 
@@ -352,7 +374,11 @@ USE_DNS=false
 while [ "$SUCCESS" = false ]; do
     # Cleanup old container if exists
     if distrobox list | grep -q "$CONTAINER_NAME"; then
-        distrobox rm -f "$CONTAINER_NAME"
+        if [ "$DRY_RUN" = true ]; then
+            log "INFO" "DRY RUN: would remove existing container $CONTAINER_NAME"
+        else
+            distrobox rm -f "$CONTAINER_NAME"
+        fi
     fi
 
     CURRENT_ADD_FLAGS="$ADD_FLAGS"
@@ -415,129 +441,16 @@ while [ "$SUCCESS" = false ]; do
 
     echo -e "\n${YELLOW}Installing basic packages. This might take a few minutes...${NC}"
 
-    # Package list fixed for Ubuntu 24.04 (Noble)
     LAST_STEP="install:packages"
     log "INFO" "Installing packages and downloading application inside container"
-    install_cmds=$(cat <<EOC
-    set -euo pipefail
-    echo 'Running: apt update'
-    sudo apt update
-    echo 'Enabling i386 architecture for Wine'
-    sudo dpkg --add-architecture i386
-    sudo apt update
-    echo 'Running: apt install (this will stream progress)'
-    sudo apt install -y curl ca-certificates lsb-release locales sudo wine64 wine32 winbind cabextract p7zip-full xdg-utils libgl1 libglx-mesa0 libegl1 libgl1-mesa-dri mesa-utils mesa-vulkan-drivers libasound2t64 libpulse0 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0 libwayland-server0
-    echo 'Generating locales'
-    sudo locale-gen en_US.UTF-8
-    app_home="\$HOME/.local/share/xtool-studio"
-    installer_dir="\$app_home/downloads"
-    payload_dir="\$app_home/payload"
-    prefix_dir="\$app_home/prefix"
-    url_record="\$app_home/last-download-url"
-    extracted_url_record="\$app_home/last-extracted-url"
-    installer_path="\$installer_dir/xTool-Studio-setup.exe"
-    user_name="\${USER:-\$(id -un 2>/dev/null || echo user)}"
-    app_install_dir="\$prefix_dir/drive_c/users/\$user_name/AppData/Local/Programs/xTool Studio"
-    nsis_plugin_dir='\$PLUGINSDIR'
-    mkdir -p "\$installer_dir"
-    if [ ! -f "\$installer_path" ] || [ ! -f "\$url_record" ] || [ "\$(cat "\$url_record")" != "$XTOOL_URL" ]; then
-        echo 'Downloading xTool Studio Windows installer (with retries)'
-        curl --fail -L --retry 5 --retry-delay 2 --connect-timeout 15 --max-time 300 --progress-bar "$XTOOL_URL" -o "\$installer_path"
-        printf '%s\n' "$XTOOL_URL" > "\$url_record"
-    fi
-    if [ ! -d "\$prefix_dir" ]; then
-        echo 'Initializing Wine prefix'
-        WINEPREFIX="\$prefix_dir" wineboot -u >/dev/null 2>&1 || true
-    fi
-    if [ ! -f "\$app_install_dir/xTool Studio.exe" ] || [ ! -f "\$extracted_url_record" ] || [ "\$(cat "\$extracted_url_record")" != "$XTOOL_URL" ]; then
-        echo 'Extracting xTool Studio application payload'
-        rm -rf "\$payload_dir" "\$app_install_dir"
-        mkdir -p "\$payload_dir" "\$app_install_dir"
-        7z x -y "\$installer_path" -o"\$payload_dir" >/dev/null
-        7z x -y "\$payload_dir/\$nsis_plugin_dir/app-64.7z" -o"\$app_install_dir" >/dev/null
-        printf '%s\n' "$XTOOL_URL" > "\$extracted_url_record"
-    fi
-    printf '%s\n' '#!/bin/sh' \
-        'set -eu' \
-        'APP_HOME="\$HOME/.local/share/xtool-studio"' \
-        'PREFIX_DIR="\$APP_HOME/prefix"' \
-        'INSTALLER_DIR="\$APP_HOME/downloads"' \
-        'INSTALLER_PATH="\$INSTALLER_DIR/xTool-Studio-setup.exe"' \
-        'USER_NAME="${USER:-$(id -un 2>/dev/null || echo user)}"' \
-        'INSTALLER_TEMP_DIR="\$PREFIX_DIR/drive_c/users/\$USER_NAME/Temp/xTool-Studio"' \
-        'is_installer_running() {' \
-        '  pgrep -af "xTool-Studio-setup\\.exe" >/dev/null 2>&1' \
-        '}' \
-        'find_installed_exe() {' \
-        '  for dir in "\$PREFIX_DIR/drive_c/users/\$USER_NAME/AppData/Local/Programs/xTool Studio" "\$PREFIX_DIR/drive_c/Program Files/xTool Studio" "\$PREFIX_DIR/drive_c/Program Files (x86)/xTool Studio"; do' \
-        '    if [ -d "\$dir" ]; then' \
-        '      for candidate in "\$dir/xTool Studio.exe" "\$dir/xTool-Studio.exe" "\$dir/xToolStudio.exe"; do' \
-        '        if [ -f "\$candidate" ]; then' \
-        '          printf "%s\\n" "\$candidate"' \
-        '          return 0' \
-        '        fi' \
-        '      done' \
-        '      find "\$dir" -type f -iname "*.exe" ! -iname "xTool Studio.exe" ! -iname "xTool-Studio.exe" ! -iname "xToolStudio.exe" ! -iname "elevate.exe" ! -iname "*setup*.exe" ! -iname "*unins*.exe" ! -iname "*uninstall*.exe" ! -iname "*update*.exe" | sort | head -n 1' \
-        '      return 0' \
-        '    fi' \
-        '  done' \
-        '  find "\$PREFIX_DIR/drive_c" -type f \\( -iname "xTool Studio*.exe" -o -iname "xTool-Studio*.exe" -o -iname "xToolStudio*.exe" \\) ! -iname "elevate.exe" ! -iname "*setup*.exe" ! -iname "*unins*.exe" ! -iname "*uninstall*.exe" ! -iname "*update*.exe" | sort | head -n 1' \
-        '}' \
-        'mkdir -p "\$APP_HOME" "\$INSTALLER_DIR"' \
-        'if [ ! -d "\$PREFIX_DIR" ]; then' \
-        '  WINEPREFIX="\$PREFIX_DIR" wineboot -u >/dev/null 2>&1 || true' \
-        'fi' \
-        "if [ \"$XTOOL_FORCE_SOFTWARE_RENDERING\" = \"1\" ]; then" \
-        '  export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"' \
-        '  export GALLIUM_DRIVER="${GALLIUM_DRIVER:-llvmpipe}"' \
-        '  export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}"' \
-        '  export __GLX_VENDOR_LIBRARY_NAME="${__GLX_VENDOR_LIBRARY_NAME:-mesa}"' \
-        '  export ELECTRON_DISABLE_GPU="${ELECTRON_DISABLE_GPU:-1}"' \
-        '  if [ -z "${__EGL_VENDOR_LIBRARY_FILENAMES:-}" ] && [ -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then' \
-        '    export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json' \
-        '  fi' \
-        '  set -- --disable-gpu --disable-gpu-compositing --use-angle=swiftshader --disable-features=Vulkan "$@"' \
-        'fi' \
-        'APP_EXE="\$(find_installed_exe)"' \
-        'if [ -z "\$APP_EXE" ]; then' \
-        '  if is_installer_running; then' \
-        '    echo "xTool Studio installer is already running. Complete it or close it before retrying." >&2' \
-        '    exit 2' \
-        '  fi' \
-        '  rm -rf "\$INSTALLER_TEMP_DIR"' \
-        '  echo "Launching xTool Studio installer inside Wine..."' \
-        '  exec env WINEPREFIX="\$PREFIX_DIR" wine "\$INSTALLER_PATH" "\$@"' \
-        'fi' \
-        'exec env WINEPREFIX="\$PREFIX_DIR" wine start /unix "\$APP_EXE" "\$@"' | sudo tee /usr/local/bin/xToolStudio >/dev/null
-    sudo chmod 0755 /usr/local/bin/xToolStudio
-    printf '%s\n' \
-        '[Desktop Entry]' \
-        'Type=Application' \
-        'Version=1.0' \
-        'Name=xTool Studio' \
-        'Comment=Run xTool Studio inside a Distrobox Wine container' \
-        'Exec=/usr/local/bin/xToolStudio %F' \
-        'TryExec=/usr/local/bin/xToolStudio' \
-        'Terminal=false' \
-        'Categories=Graphics;Utility;' \
-        'StartupNotify=true' \
-        'Icon=wine' | sudo tee /usr/share/applications/xToolStudio.desktop >/dev/null
-    if [ -f /run/host/usr/share/cachyos-fish-config/cachyos-config.fish ]; then
-        sudo mkdir -p /usr/share/cachyos-fish-config
-        sudo ln -sfn /run/host/usr/share/cachyos-fish-config/cachyos-config.fish /usr/share/cachyos-fish-config/cachyos-config.fish
-        if [ -d /run/host/usr/share/cachyos-fish-config/conf.d ]; then
-            sudo ln -sfn /run/host/usr/share/cachyos-fish-config/conf.d /usr/share/cachyos-fish-config/conf.d
-        fi
-    fi
-EOC
-)
+    prepare_container_setup
 
     if [ "$DRY_RUN" = true ]; then
-        log "INFO" "DRY RUN: would run install commands inside container"
+        log "INFO" "DRY RUN: would run $SETUP_DIR/container-setup.sh inside container"
         SUCCESS=true
     else
-        distrobox enter "$CONTAINER_NAME" -- bash -lc "$install_cmds" 2>&1 | tee -a "$LOG_FILE"
-        install_rc=${PIPESTATUS[0]:-0}
+        enter_container /bin/bash "$SETUP_DIR/container-setup.sh"
+        install_rc=$?
         if [ $install_rc -eq 0 ]; then
             SUCCESS=true
         else
@@ -558,7 +471,7 @@ log "INFO" "Exporting application"
 if [ "$DRY_RUN" = true ]; then
     log "INFO" "DRY RUN: would run distrobox-export for xToolStudio"
 else
-    run_logged distrobox enter "$CONTAINER_NAME" -- distrobox-export --app xToolStudio || fail "Application export failed. See $LOG_FILE for details."
+    enter_container distrobox-export --app xToolStudio || fail "Application export failed. See $LOG_FILE for details."
 fi
 
 D_FILES=()

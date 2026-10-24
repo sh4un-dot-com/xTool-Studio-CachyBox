@@ -57,7 +57,7 @@ Install these on the host:
 
 ```bash
 git clone https://github.com/AkitaEngineering/xTool-Studio-CachyBox.git
-cd 'xTool Studio-Cachy Box'
+cd xTool-Studio-CachyBox
 ```
 
 2. Run the Bash installer.
@@ -116,7 +116,7 @@ The installer will:
 
 The installer uses these locations:
 
-- Host cache and logs: `~/.cache/xtool-studio-cachy-box/`
+- Host cache, logs, and copied container setup scripts: `~/.cache/xtool-studio-cachy-box/`
 - Host Wine data and downloaded installer: `~/.local/share/xtool-studio/`
 - Exported launcher inside the container: `/usr/local/bin/xToolStudio`
 - Exported desktop entry inside the container: `/usr/share/applications/xToolStudio.desktop`
@@ -177,6 +177,8 @@ It can also remove `~/.local/share/xtool-studio/`, which contains the Wine prefi
 
 ## Troubleshooting
 
+- After cloning, enter the GitHub directory name `xTool-Studio-CachyBox`.
+- `distrobox-enter: eval: Syntax error: "(" unexpected`: Distrobox 1.7 on Ubuntu, Zorin, and other Debian-based hosts evaluates `distrobox enter` with `/bin/sh` (dash). This installer now copies `scripts/container-setup.sh` into `~/.cache/xtool-studio-cachy-box/` and runs that file. Update the repository and rerun `./install.sh`.
 - DNS failures: the installer retries container creation with explicit DNS servers.
 - Nvidia failures during container creation: configure Podman CDI support first.
 - Blank or unstable rendering: retry with `--gpu 4` to force software rendering.

@@ -62,7 +62,7 @@ if command -v distrobox &>/dev/null && distrobox list | grep -q "$CONTAINER_NAME
     if [ "$DRY_RUN" = true ]; then
         log INFO "DRY RUN: would unexport xToolStudio from $CONTAINER_NAME"
     else
-        distrobox enter "$CONTAINER_NAME" -- distrobox-export --app xToolStudio --delete
+        distrobox enter --no-workdir "$CONTAINER_NAME" -- distrobox-export --app xToolStudio --delete
     fi
 else
     if ! command -v distrobox &>/dev/null; then
