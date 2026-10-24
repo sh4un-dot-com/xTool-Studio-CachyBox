@@ -490,11 +490,6 @@ fi
 if [ ${#D_FILES[@]} -gt 0 ]; then
     for D_FILE in "${D_FILES[@]}"; do
         sed -i 's|/run/host||' "$D_FILE"
-
-        OLD_EXEC=$(grep '^Exec=' "$D_FILE" | head -n 1 | cut -d'=' -f2-)
-        if [ -n "$OLD_EXEC" ] && ! grep -q "distrobox stop" "$D_FILE"; then
-            sed -i "s|Exec=.*|Exec=sh -c \"$OLD_EXEC; distrobox stop $CONTAINER_NAME --yes\"|" "$D_FILE"
-        fi
     done
 
     [ -x "$(command -v update-desktop-database)" ] && update-desktop-database ~/.local/share/applications

@@ -9,6 +9,17 @@ USER_NAME="${USER:-$(id -un 2>/dev/null || echo user)}"
 INSTALLER_TEMP_DIR="$PREFIX_DIR/drive_c/users/$USER_NAME/Temp/xTool-Studio"
 RENDER_FLAG_FILE="$APP_HOME/force-software-rendering"
 
+# Distrobox enter forwards the host environment. Host Electron/VS Code
+# sets ELECTRON_RUN_AS_NODE=1, which makes xTool Studio (Electron) treat
+# itself as Node, eval stdin, and exit. CI=true also changes startup.
+unset ELECTRON_RUN_AS_NODE
+unset ELECTRON_NO_ATTACH_CONSOLE
+unset CI
+unset VSCODE_ESM_ENTRYPOINT
+unset VSCODE_PID
+unset VSCODE_IPC_HOOK
+unset CHROME_DESKTOP
+
 is_installer_running() {
 	if command -v pgrep >/dev/null 2>&1; then
 		pgrep -af "xTool-Studio-setup\\.exe" >/dev/null 2>&1
@@ -75,7 +86,17 @@ if [ -z "$APP_EXE" ]; then
 	fi
 	rm -rf "$INSTALLER_TEMP_DIR"
 	echo "Launching xTool Studio installer inside Wine..."
+	if [ ! -t 0 ]; then
+		exec </dev/null
+	fi
 	exec env WINEPREFIX="$PREFIX_DIR" wine "$INSTALLER_PATH" "$@"
 fi
 
-exec env WINEPREFIX="$PREFIX_DIR" wine start /unix "$APP_EXE" "$@"
+# Missing stdin is redirected so Electron/Node does not crash with EBADF.
+# Keep this process in the Distrobox enter session until Wine exits so
+# podman does not tear down the cgroup.
+if [ ! -t 0 ]; then
+	exec </dev/null
+fi
+env WINEPREFIX="$PREFIX_DIR" wine start /unix "$APP_EXE" "$@"
+exec env WINEPREFIX="$PREFIX_DIR" wineserver -w
