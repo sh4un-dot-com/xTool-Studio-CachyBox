@@ -13,12 +13,15 @@ echo -e "${BLUE}--------------------------------------------------------${NC}"
 
 # --- CLI options & Logging ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOST_OS="$(uname -s)"
 LOG_DIR="$HOME/.cache/xtool-studio-cachy-box"
 SETUP_DIR="$LOG_DIR"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install.log"
 LAST_STEP_FILE="$LOG_DIR/last_failed_step"
 CONTAINER_SETUP_SRC="$SCRIPT_DIR/scripts/container-setup.sh"
+FREEBSD_SETUP_SRC="$SCRIPT_DIR/scripts/install-freebsd.sh"
+PAYLOAD_SRC="$SCRIPT_DIR/scripts/install-payload.sh"
 LAUNCHER_SRC="$SCRIPT_DIR/scripts/xtool-studio-launcher.sh"
 
 log(){
@@ -136,7 +139,8 @@ while [[ "$#" -gt 0 ]]; do
         --log-file)
             LOG_FILE="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: $0 [--non-interactive|--yes|-y] [--dry-run] [--check] [--uninstall] [--url URL] [--container-name NAME] [--gpu 1-4] [--image-source 1-2] [--log-file PATH]";
+            echo "Usage: $0 [--non-interactive|--yes|-y] [--dry-run] [--check] [--uninstall] [--url URL] [--container-name NAME] [--gpu 1-4] [--image-source 1-2] [--log-file PATH]"
+            echo "On FreeBSD, Distrobox is skipped and native Wine is installed with pkg."
             exit 0 ;;
         *) shift ;;
     esac
@@ -159,6 +163,11 @@ fail(){
 }
 
 trap 'rc=$?; if [ $rc -ne 0 ]; then log "ERROR" "Installer exited with code $rc (last step: $LAST_STEP)"; fi' EXIT
+
+case "$HOST_OS" in
+    Linux|FreeBSD) ;;
+    *) fail "Unsupported host OS: $HOST_OS. Linux (Distrobox + Wine) and FreeBSD (native Wine) are supported." ;;
+esac
 
 # Helpers: download with retries and run commands (logs + dry-run)
 download_with_retries(){
@@ -194,39 +203,70 @@ spinner(){
     done
 }
 
+detect_gpu(){
+    detected_gpu="none"
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
+        detected_gpu="nvidia"
+        return 0
+    fi
+
+    local pci=""
+    if command -v lspci >/dev/null 2>&1; then
+        pci="$(lspci 2>/dev/null | grep -Ei 'VGA|3D|Display' || true)"
+    elif command -v pciconf >/dev/null 2>&1; then
+        pci="$(pciconf -lv 2>/dev/null || true)"
+    fi
+
+    if printf '%s' "$pci" | grep -iq nvidia; then
+        detected_gpu="nvidia"
+    elif printf '%s' "$pci" | grep -Eiq 'AMD|ATI'; then
+        detected_gpu="amd"
+    elif printf '%s' "$pci" | grep -iq intel; then
+        detected_gpu="intel"
+    fi
+}
+
 # preflight checks
 preflight(){
-    log "INFO" "Running preflight checks"
-    # check required commands
-    for cmd in distrobox podman curl lspci; do
-        if ! command -v $cmd &>/dev/null; then
+    log "INFO" "Running preflight checks on $HOST_OS"
+    local cmds
+    if [ "$HOST_OS" = "FreeBSD" ]; then
+        cmds=(curl pkg)
+    else
+        cmds=(distrobox podman curl lspci)
+    fi
+    for cmd in "${cmds[@]}"; do
+        if ! command -v "$cmd" &>/dev/null; then
             log "WARN" "Command $cmd not found. Installer may attempt to install it or fail."
             case $cmd in
                 distrobox|podman)
-                    echo "Install via your package manager (apt/pacman/dnf) or see https://github.com/89luca89/distrobox";
+                    echo "Install via your package manager (apt/pacman/dnf) or see https://github.com/89luca89/distrobox"
                     ;;
                 curl)
-                    echo "Install curl (apt install curl)";
+                    echo "Install curl (pkg install curl, or apt install curl)"
+                    ;;
+                pkg)
+                    echo "FreeBSD pkg is required to install Wine."
                     ;;
                 lspci)
-                    echo "Install pciutils (apt install pciutils)";
+                    echo "Install pciutils (apt install pciutils)"
                     ;;
             esac
         fi
     done
     # network check
-    if ! ping -c1 github.com &>/dev/null; then
+    if ! ping -c 1 github.com &>/dev/null; then
         log "WARN" "Network appears unreachable; downloads will fail."
         echo "WARNING: network check failed"
     fi
-    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null && ! has_nvidia_container_support; then
+    if [ "$HOST_OS" != "FreeBSD" ] && command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null && ! has_nvidia_container_support; then
         log "WARN" "Nvidia GPU detected but Podman CDI support is not configured. Install nvidia-container-toolkit and generate a CDI spec before using the Nvidia path."
         echo "WARNING: Nvidia container support is not configured for Podman."
         echo "Install nvidia-container-toolkit and generate /etc/cdi/nvidia.yaml, or use Generic rendering."
     fi
-    # disk space
-    avail=$(df --output=avail -k . | tail -1)
-    if [ "$avail" -lt 1048576 ]; then
+    # disk space (POSIX df -kP: avail is column 4)
+    avail=$(df -kP . | awk 'NR==2 {print $4}')
+    if [ -n "$avail" ] && [ "$avail" -lt 1048576 ]; then
         log "WARN" "Less than 1GB free; installation may fail."
     fi
     echo "preflight complete"
@@ -244,22 +284,41 @@ enter_container(){
     return ${PIPESTATUS[0]:-0}
 }
 
+write_setup_env(){
+    {
+        printf 'XTOOL_URL=%q\n' "$XTOOL_URL"
+        printf 'XTOOL_FORCE_SOFTWARE_RENDERING=%q\n' "$XTOOL_FORCE_SOFTWARE_RENDERING"
+        printf 'XTOOL_LAUNCHER_SRC=%q\n' "$SETUP_DIR/xtool-studio-launcher.sh"
+        printf 'XTOOL_SETUP_DIR=%q\n' "$SETUP_DIR"
+        printf 'XTOOL_PAYLOAD_LIB=%q\n' "$SETUP_DIR/install-payload.sh"
+        printf 'XTOOL_DRY_RUN=%q\n' "$DRY_RUN"
+    } > "$SETUP_DIR/container-setup.env"
+}
+
 prepare_container_setup(){
-    if [ ! -f "$CONTAINER_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ]; then
+    if [ ! -f "$CONTAINER_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ] || [ ! -f "$PAYLOAD_SRC" ]; then
         fail "Missing installer scripts in $SCRIPT_DIR/scripts. Re-clone the repository and retry."
     fi
 
     mkdir -p "$SETUP_DIR"
     cp -f "$CONTAINER_SETUP_SRC" "$SETUP_DIR/container-setup.sh"
     cp -f "$LAUNCHER_SRC" "$SETUP_DIR/xtool-studio-launcher.sh"
-    chmod 0755 "$SETUP_DIR/container-setup.sh" "$SETUP_DIR/xtool-studio-launcher.sh"
+    cp -f "$PAYLOAD_SRC" "$SETUP_DIR/install-payload.sh"
+    chmod 0755 "$SETUP_DIR/container-setup.sh" "$SETUP_DIR/xtool-studio-launcher.sh" "$SETUP_DIR/install-payload.sh"
+    write_setup_env
+}
 
-    {
-        printf 'XTOOL_URL=%q\n' "$XTOOL_URL"
-        printf 'XTOOL_FORCE_SOFTWARE_RENDERING=%q\n' "$XTOOL_FORCE_SOFTWARE_RENDERING"
-        printf 'XTOOL_LAUNCHER_SRC=%q\n' "$SETUP_DIR/xtool-studio-launcher.sh"
-        printf 'XTOOL_SETUP_DIR=%q\n' "$SETUP_DIR"
-    } > "$SETUP_DIR/container-setup.env"
+prepare_freebsd_setup(){
+    if [ ! -f "$FREEBSD_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ] || [ ! -f "$PAYLOAD_SRC" ]; then
+        fail "Missing FreeBSD installer scripts in $SCRIPT_DIR/scripts. Re-clone the repository and retry."
+    fi
+
+    mkdir -p "$SETUP_DIR"
+    cp -f "$FREEBSD_SETUP_SRC" "$SETUP_DIR/install-freebsd.sh"
+    cp -f "$LAUNCHER_SRC" "$SETUP_DIR/xtool-studio-launcher.sh"
+    cp -f "$PAYLOAD_SRC" "$SETUP_DIR/install-payload.sh"
+    chmod 0755 "$SETUP_DIR/install-freebsd.sh" "$SETUP_DIR/xtool-studio-launcher.sh" "$SETUP_DIR/install-payload.sh"
+    write_setup_env
 }
 
 
@@ -284,14 +343,7 @@ echo -e "\n${YELLOW}--- GPU Selection ---${NC}"
 if [ -n "$gpu_choice" ]; then
     log "INFO" "Using GPU selection from CLI: $gpu_choice"
 fi
-detected_gpu="none"
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    detected_gpu="nvidia"
-elif lspci | grep -Ei "VGA|3D" | grep -iq "AMD"; then
-    detected_gpu="amd"
-elif lspci | grep -Ei "VGA|3D" | grep -iq "Intel"; then
-    detected_gpu="intel"
-fi
+detect_gpu
 
 echo -e "Detected Hardware: ${GREEN}$detected_gpu${NC}"
 
@@ -302,10 +354,17 @@ case $detected_gpu in
     "intel")  gpu_default="3" ;;
 esac
 
-echo "1) Nvidia (uses --nvidia flag)"
-echo "2) AMD (uses DRI pass-through)"
-echo "3) Intel (uses DRI pass-through)"
-echo "4) Generic / None / Software Rendering"
+if [ "$HOST_OS" = "FreeBSD" ]; then
+    echo "1) Nvidia (host nvidia-driver)"
+    echo "2) AMD (host drm-kmod / graphics/gpu-firmware-*)"
+    echo "3) Intel (host drm-kmod)"
+    echo "4) Generic / None / Software Rendering"
+else
+    echo "1) Nvidia (uses --nvidia flag)"
+    echo "2) AMD (uses DRI pass-through)"
+    echo "3) Intel (uses DRI pass-through)"
+    echo "4) Generic / None / Software Rendering"
+fi
 if [ -n "$gpu_choice" ]; then
     log "INFO" "Using GPU from CLI: $gpu_choice"
 elif [ "$NON_INTERACTIVE" = true ]; then
@@ -316,7 +375,7 @@ else
     gpu_choice=${gpu_choice:-$gpu_default}
 fi
 
-if [ "$gpu_choice" = "1" ] && ! has_nvidia_container_support; then
+if [ "$gpu_choice" = "1" ] && [ "$HOST_OS" != "FreeBSD" ] && ! has_nvidia_container_support; then
     echo -e "${YELLOW}Nvidia GPU detected, but Podman GPU support is not configured.${NC}"
     echo "Install nvidia-container-toolkit and generate /etc/cdi/nvidia.yaml to use the Nvidia path."
     if [ "$NON_INTERACTIVE" = true ]; then
@@ -347,6 +406,30 @@ case $gpu_choice in
     3) ADD_FLAGS="--device /dev/dri:/dev/dri"; GPU_TYPE="intel"; CONTAINERFILE="containerfile.intel"; XTOOL_FORCE_SOFTWARE_RENDERING=0 ;;
     *) GPU_TYPE="generic"; CONTAINERFILE="containerfile.amd" ;;
 esac
+
+if [ "$HOST_OS" = "FreeBSD" ]; then
+    echo -e "\n${YELLOW}FreeBSD host detected. Distrobox is Linux-only; installing native Wine.${NC}"
+    LAST_STEP="freebsd:packages"
+    log "INFO" "Starting FreeBSD native Wine install. Logs: $LOG_FILE"
+    prepare_freebsd_setup
+    if [ "$DRY_RUN" = true ]; then
+        log "INFO" "DRY RUN: would run $SETUP_DIR/install-freebsd.sh"
+        echo -e "${GREEN}DRY RUN complete (FreeBSD native Wine path).${NC}"
+        exit 0
+    fi
+    bash "$SETUP_DIR/install-freebsd.sh" 2>&1 | tee -a "$LOG_FILE"
+    freebsd_rc=${PIPESTATUS[0]:-0}
+    if [ "$freebsd_rc" -ne 0 ]; then
+        fail "FreeBSD Wine setup failed. See $LOG_FILE for details."
+    fi
+    if [ ! -f "$HOME/.local/share/applications/xToolStudio.desktop" ]; then
+        fail "Desktop file was not created. See $LOG_FILE for details."
+    fi
+    echo -e "${GREEN}Installation successful!${NC}"
+    echo -e "Launch from the app menu, or run: $HOME/.local/bin/xToolStudio"
+    echo -e "If the menu entry is missing, add ~/.local/bin to PATH and log out/in."
+    exit 0
+fi
 
 # --- Step 2: Image Source ---
 echo -e "\n${YELLOW}--- Step 2: Image Source ---${NC}"

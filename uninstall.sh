@@ -15,6 +15,7 @@ LAST_STEP_FILE="$LOG_DIR/last_failed_step"
 CONTAINER_NAME="xtool-studio"
 NON_INTERACTIVE=false
 DRY_RUN=false
+HOST_OS="$(uname -s)"
 
 # CLI parser
 while [[ "$#" -gt 0 ]]; do
@@ -56,7 +57,7 @@ trap 'rc=$?; if [ $rc -ne 0 ]; then log "ERROR" "Uninstaller exited with code $r
 LAST_STEP="init"
 
 # 1. Unexport the application (removes menu entries and binaries)
-if command -v distrobox &>/dev/null && distrobox list | grep -q "$CONTAINER_NAME"; then
+if [ "$HOST_OS" != "FreeBSD" ] && command -v distrobox &>/dev/null && distrobox list | grep -q "$CONTAINER_NAME"; then
     log INFO "--- Step 1: Removing Menu Entries & Binaries ---"
     LAST_STEP="unexport"
     if [ "$DRY_RUN" = true ]; then
@@ -65,7 +66,9 @@ if command -v distrobox &>/dev/null && distrobox list | grep -q "$CONTAINER_NAME
         distrobox enter --no-workdir "$CONTAINER_NAME" -- distrobox-export --app xToolStudio --delete
     fi
 else
-    if ! command -v distrobox &>/dev/null; then
+    if [ "$HOST_OS" = "FreeBSD" ]; then
+        log INFO "FreeBSD native Wine install: skipping Distrobox unexport."
+    elif ! command -v distrobox &>/dev/null; then
         log WARN "distrobox is not installed; skipping app unexport."
     else
         log INFO "No active container '$CONTAINER_NAME' found for unexporting."
@@ -73,7 +76,7 @@ else
 fi
 
 # 2. Remove the Distrobox container
-if command -v distrobox &>/dev/null && distrobox list | grep -q "$CONTAINER_NAME"; then
+if [ "$HOST_OS" != "FreeBSD" ] && command -v distrobox &>/dev/null && distrobox list | grep -q "$CONTAINER_NAME"; then
     log INFO "--- Step 2: Removing Distrobox Container ---"
     if [ "$DRY_RUN" = true ]; then
         log INFO "DRY RUN: would remove container $CONTAINER_NAME"
@@ -82,7 +85,9 @@ if command -v distrobox &>/dev/null && distrobox list | grep -q "$CONTAINER_NAME
     fi
     log INFO "Container '$CONTAINER_NAME' removed."
 else
-    if ! command -v distrobox &>/dev/null; then
+    if [ "$HOST_OS" = "FreeBSD" ]; then
+        log INFO "FreeBSD native Wine install: no Distrobox container to remove."
+    elif ! command -v distrobox &>/dev/null; then
         log WARN "distrobox is not installed; skipping container cleanup."
     else
         log INFO "Container '$CONTAINER_NAME' does not exist."
@@ -92,7 +97,7 @@ fi
 # 3. Remove custom Podman images
 echo -e "${YELLOW}--- Step 3: Removing Podman Images ---${NC}"
 # Look for images created during custom installation
-if command -v podman &>/dev/null; then
+if [ "$HOST_OS" != "FreeBSD" ] && command -v podman &>/dev/null; then
     IMAGES=$(podman images | grep "xtool-custom" | awk '{print $3}')
     if [ -n "$IMAGES" ]; then
         if [ "$DRY_RUN" = true ]; then
@@ -105,7 +110,11 @@ if command -v podman &>/dev/null; then
         log INFO "No custom xTool Studio images found."
     fi
 else
-    log WARN "podman is not installed; skipping image cleanup."
+    if [ "$HOST_OS" = "FreeBSD" ]; then
+        log INFO "FreeBSD native Wine install: skipping Podman image cleanup."
+    else
+        log WARN "podman is not installed; skipping image cleanup."
+    fi
 fi
 
 # 4. Manual Cleanup (Safety Net)
@@ -116,11 +125,12 @@ if [ "$DRY_RUN" = true ]; then
         log INFO "DRY RUN: would refresh desktop database"
     fi
 else
-    # Remove leftover desktop files and binaries just in case
+    # Remove leftover desktop files, user launcher, and installer cache.
+    # Keep the Wine prefix until the user confirms below.
     rm -f ~/.local/share/applications/*xtool*.desktop
     rm -f ~/.local/share/applications/*xToolStudio*.desktop
+    rm -f ~/.local/share/applications/xToolStudio.desktop
     rm -f ~/.local/bin/xToolStudio
-    rm -rf ~/.local/share/xtool-studio
     rm -rf ~/.cache/xtool-studio-cachy-box
 
     # Update host desktop database

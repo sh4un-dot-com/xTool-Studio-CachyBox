@@ -1,7 +1,7 @@
 # xTool Studio Cachy Box
-### xTool Studio: Containerized Windows Runtime for CachyOS and Fedora
+### xTool Studio: Windows runtime for Linux (Distrobox) and FreeBSD (native Wine)
 
-This repository installs xTool Studio inside an Ubuntu 24.04 container using Distrobox and Podman, then runs the official Windows build through Wine. The goal is to give CachyOS and Fedora users a repeatable way to run xTool Studio even though xTool does not publish a Linux build.
+This repository installs the official xTool Studio Windows build through Wine. On Linux it uses an Ubuntu 24.04 Distrobox/Podman container. On FreeBSD it installs native Wine with `pkg` and skips Distrobox, which is Linux-only. The goal is a repeatable way to run xTool Studio on CachyOS, Fedora, and FreeBSD even though xTool does not publish a Linux or FreeBSD build.
 
 ---
 
@@ -22,10 +22,11 @@ The project name is now **xTool Studio Cachy Box**.
 ## Features
 
 - Automatic latest-release lookup from xTool release notes, with `--url` and `XTOOL_URL` overrides.
-- GPU-aware container setup for Nvidia, AMD, Intel, or software rendering.
-- Works on host systems such as CachyOS and Fedora by isolating Wine and Ubuntu dependencies in the container.
+- GPU-aware setup for Nvidia, AMD, Intel, or software rendering.
+- Linux hosts such as CachyOS and Fedora isolate Wine in an Ubuntu Distrobox container.
+- FreeBSD hosts use native Wine from `pkg` (`emulators/wine`) with the same Wine prefix layout.
 - Persistent Wine prefix and installer cache under `~/.local/share/xtool-studio/`.
-- Desktop integration through `distrobox-export`.
+- Desktop integration through `distrobox-export` on Linux, or a user desktop entry on FreeBSD.
 - Optional local image builds through `containerfile.amd`, `containerfile.intel`, and `containerfile.nvidia`.
 - DNS retry path for container creation when upstream downloads fail due to name resolution.
 
@@ -33,7 +34,7 @@ The project name is now **xTool Studio Cachy Box**.
 
 ## Important Notes
 
-- xTool officially supports Windows and macOS, not Linux. This repository is an unofficial compatibility layer.
+- xTool officially supports Windows and macOS. This repository is an unofficial compatibility layer for Linux and FreeBSD.
 - The first launch may open the Windows installer inside Wine. Complete the installer, then relaunch from the exported desktop entry if the app does not start automatically.
 - Device connectivity, camera features, and hardware-specific workflows may still have Wine limitations.
 
@@ -41,13 +42,23 @@ The project name is now **xTool Studio Cachy Box**.
 
 ## Prerequisites
 
-Install these on the host:
+**Linux**
 
 - `podman`
 - `distrobox`
 - `curl`
 - `bash`
 - `nvidia-container-toolkit` plus a CDI spec such as `/etc/cdi/nvidia.yaml` if you want the Nvidia path
+
+**FreeBSD 14.3+ / 15+**
+
+- `bash` (`pkg install bash`)
+- `curl`
+- `pkg` (base)
+- `doas` or `sudo` for package installs
+- Graphics drivers on the host (`nvidia-driver` or `drm-kmod`) if you want hardware rendering
+
+The installer will install `wine` and extract tools with `pkg` when they are missing. Distrobox and Podman are not used on FreeBSD.
 
 ---
 
@@ -56,7 +67,7 @@ Install these on the host:
 1. Clone the repository.
 
 ```bash
-git clone https://github.com/AkitaEngineering/xTool-Studio-CachyBox.git
+git clone https://github.com/sh4un-dot-com/xTool-Studio-CachyBox.git
 cd xTool-Studio-CachyBox
 ```
 
@@ -74,9 +85,9 @@ chmod +x install.fish
 ./install.fish
 ```
 
-4. Answer the prompts for GPU stack and image source.
+4. Answer the prompts for GPU stack and, on Linux, image source.
 
-The installer will:
+On Linux the installer will:
 
 - detect your GPU,
 - optionally build a local image,
@@ -84,6 +95,8 @@ The installer will:
 - create the Distrobox container,
 - install Wine and runtime dependencies in the container,
 - export `xToolStudio` to your desktop menu.
+
+On FreeBSD it skips Distrobox and the image-source prompt, installs native Wine with `pkg`, extracts the Windows payload into `~/.local/share/xtool-studio/`, and writes `~/.local/bin/xToolStudio` plus a desktop entry.
 
 ---
 
@@ -116,16 +129,18 @@ The installer will:
 
 The installer uses these locations:
 
-- Host cache, logs, and copied container setup scripts: `~/.cache/xtool-studio-cachy-box/`
+- Host cache, logs, and copied setup scripts: `~/.cache/xtool-studio-cachy-box/`
 - Host Wine data and downloaded installer: `~/.local/share/xtool-studio/`
-- Exported launcher inside the container: `/usr/local/bin/xToolStudio`
-- Exported desktop entry inside the container: `/usr/share/applications/xToolStudio.desktop`
+- Linux launcher inside the container: `/usr/local/bin/xToolStudio`
+- Linux desktop entry inside the container: `/usr/share/applications/xToolStudio.desktop`
+- FreeBSD launcher: `~/.local/bin/xToolStudio`
+- FreeBSD desktop entry: `~/.local/share/applications/xToolStudio.desktop`
 
 ---
 
 ## Podman Compose
 
-You can also run the compose setup directly.
+Linux only. You can also run the compose setup directly.
 
 1. Optionally select a local image and containerfile.
 
@@ -183,7 +198,9 @@ It can also remove `~/.local/share/xtool-studio/`, which contains the Wine prefi
 - Nvidia failures during container creation: configure Podman CDI support first.
 - Blank or unstable rendering: retry with `--gpu 4` to force software rendering.
 - Installer opens but no app launches afterward: finish the xTool Studio installer in Wine, then relaunch the exported desktop entry.
-- Unsupported host expectation: xTool does not support Linux officially, so some features may still require a Windows machine.
+- FreeBSD: Distrobox is not used. Install `bash` first (`pkg install bash`), then `./install.sh`. Launch with `~/.local/bin/xToolStudio` if the desktop menu does not pick up `~/.local/bin`.
+- FreeBSD GPU: install host drivers yourself (`nvidia-driver` or `drm-kmod`). `--gpu 4` forces software rendering in the launcher.
+- Unsupported host expectation: xTool does not support Linux or FreeBSD officially, so some features may still require a Windows machine.
 
 ---
 

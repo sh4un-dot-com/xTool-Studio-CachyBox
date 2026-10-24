@@ -18,9 +18,15 @@ source "$ENV_FILE"
 : "${XTOOL_URL:?XTOOL_URL is required}"
 : "${XTOOL_LAUNCHER_SRC:?XTOOL_LAUNCHER_SRC is required}"
 XTOOL_FORCE_SOFTWARE_RENDERING="${XTOOL_FORCE_SOFTWARE_RENDERING:-1}"
+PAYLOAD_LIB="${XTOOL_PAYLOAD_LIB:-$SETUP_DIR/install-payload.sh}"
 
 if [ ! -f "$XTOOL_LAUNCHER_SRC" ]; then
     echo "Missing launcher script: $XTOOL_LAUNCHER_SRC" >&2
+    exit 1
+fi
+
+if [ ! -f "$PAYLOAD_LIB" ]; then
+    echo "Missing payload installer: $PAYLOAD_LIB" >&2
     exit 1
 fi
 
@@ -70,51 +76,9 @@ fi
 echo 'Generating locales'
 sudo locale-gen en_US.UTF-8
 
-app_home="$HOME/.local/share/xtool-studio"
-installer_dir="$app_home/downloads"
-payload_dir="$app_home/payload"
-prefix_dir="$app_home/prefix"
-url_record="$app_home/last-download-url"
-extracted_url_record="$app_home/last-extracted-url"
-installer_path="$installer_dir/xTool-Studio-setup.exe"
-user_name="${USER:-$(id -un 2>/dev/null || echo user)}"
-app_install_dir="$prefix_dir/drive_c/users/$user_name/AppData/Local/Programs/xTool Studio"
-nsis_plugin_dir='$PLUGINSDIR'
-
-mkdir -p "$installer_dir" "$app_home"
-printf '%s\n' "$XTOOL_FORCE_SOFTWARE_RENDERING" > "$app_home/force-software-rendering"
-
-if [ ! -f "$installer_path" ] || [ ! -f "$url_record" ] || [ "$(cat "$url_record")" != "$XTOOL_URL" ]; then
-    echo 'Downloading xTool Studio Windows installer (with retries)'
-    curl --fail -L --retry 5 --retry-delay 2 --connect-timeout 15 --max-time 300 --progress-bar "$XTOOL_URL" -o "$installer_path"
-    printf '%s\n' "$XTOOL_URL" > "$url_record"
-fi
-
-if [ ! -d "$prefix_dir" ]; then
-    echo 'Initializing Wine prefix'
-    WINEPREFIX="$prefix_dir" wineboot -u >/dev/null 2>&1 || true
-fi
-
-if [ ! -f "$app_install_dir/xTool Studio.exe" ] || [ ! -f "$extracted_url_record" ] || [ "$(cat "$extracted_url_record")" != "$XTOOL_URL" ]; then
-    echo 'Extracting xTool Studio application payload'
-    rm -rf "$payload_dir" "$app_install_dir"
-    mkdir -p "$payload_dir" "$app_install_dir"
-    7z x -y "$installer_path" -o"$payload_dir" >/dev/null
-
-    archive="$payload_dir/$nsis_plugin_dir/app-64.7z"
-    if [ ! -f "$archive" ]; then
-        archive="$(find "$payload_dir" -type f -name 'app-64.7z' -print -quit || true)"
-    fi
-    if [ -z "$archive" ] || [ ! -f "$archive" ]; then
-        echo "Could not find app-64.7z in the extracted NSIS payload." >&2
-        echo "Installer format may have changed. Payload contents:" >&2
-        find "$payload_dir" -maxdepth 3 -print >&2 || true
-        exit 1
-    fi
-
-    7z x -y "$archive" -o"$app_install_dir" >/dev/null
-    printf '%s\n' "$XTOOL_URL" > "$extracted_url_record"
-fi
+# shellcheck disable=SC1090
+source "$PAYLOAD_LIB"
+xtool_install_payload
 
 sudo install -m 0755 "$XTOOL_LAUNCHER_SRC" /usr/local/bin/xToolStudio
 printf '%s\n' \
