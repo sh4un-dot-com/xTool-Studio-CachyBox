@@ -89,7 +89,9 @@ if [ "$force_software_rendering" = "1" ]; then
 	if [ -z "${__EGL_VENDOR_LIBRARY_FILENAMES:-}" ] && [ -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then
 		export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 	fi
-	set -- --disable-gpu --disable-gpu-compositing --use-angle=swiftshader --disable-features=Vulkan "$@"
+	# xTool Studio 1.6.6 exits immediately when Chromium's --disable-gpu
+	# switches are supplied. The Mesa/Wine variables above select llvmpipe
+	# without changing Electron's application arguments.
 fi
 
 APP_EXE="$(find_installed_exe)"
