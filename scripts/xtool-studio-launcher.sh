@@ -8,6 +8,20 @@ INSTALLER_PATH="$INSTALLER_DIR/xTool-Studio-setup.exe"
 USER_NAME="${USER:-$(id -un 2>/dev/null || echo user)}"
 INSTALLER_TEMP_DIR="$PREFIX_DIR/drive_c/users/$USER_NAME/Temp/xTool-Studio"
 RENDER_FLAG_FILE="$APP_HOME/force-software-rendering"
+LAUNCH_LOG_DIR="$HOME/.cache/xtool-studio-cachy-box"
+LAUNCH_LOG="$LAUNCH_LOG_DIR/launch.log"
+
+# Desktop launchers normally discard stdout/stderr. Preserve it so a failed
+# Wine/Electron startup can be diagnosed without changing the menu entry.
+if [ ! -t 2 ]; then
+	mkdir -p "$LAUNCH_LOG_DIR"
+	if [ -f "$LAUNCH_LOG" ] && [ "$(wc -c <"$LAUNCH_LOG")" -gt 1048576 ]; then
+		mv -f "$LAUNCH_LOG" "$LAUNCH_LOG.old"
+	fi
+	exec >>"$LAUNCH_LOG" 2>&1
+fi
+
+printf '\n[%s] Starting xTool Studio\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 # Distrobox enter forwards the host environment. Host Electron/VS Code
 # sets ELECTRON_RUN_AS_NODE=1, which makes xTool Studio (Electron) treat
@@ -91,6 +105,8 @@ if [ -z "$APP_EXE" ]; then
 	fi
 	exec env WINEPREFIX="$PREFIX_DIR" wine "$INSTALLER_PATH" "$@"
 fi
+
+printf 'Using executable: %s\n' "$APP_EXE"
 
 # Missing stdin is redirected so Electron/Node does not crash with EBADF.
 # Keep this process in the Distrobox enter session until Wine exits so

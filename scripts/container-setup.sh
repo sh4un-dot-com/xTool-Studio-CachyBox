@@ -80,7 +80,11 @@ sudo locale-gen en_US.UTF-8
 source "$PAYLOAD_LIB"
 xtool_install_payload
 
+# This path is inside the Distrobox container, not on the host. Create it
+# explicitly because minimal base images are not required to ship it.
+sudo mkdir -p /usr/local/bin
 sudo install -m 0755 "$XTOOL_LAUNCHER_SRC" /usr/local/bin/xToolStudio
+sudo test -x /usr/local/bin/xToolStudio
 printf '%s\n' \
     '[Desktop Entry]' \
     'Type=Application' \
@@ -91,8 +95,10 @@ printf '%s\n' \
     'TryExec=/usr/local/bin/xToolStudio' \
     'Terminal=false' \
     'Categories=Graphics;Utility;' \
-    'StartupNotify=true' \
+    'StartupNotify=false' \
     'Icon=wine' | sudo tee /usr/share/applications/xToolStudio.desktop >/dev/null
+
+echo 'Installed container launcher: /usr/local/bin/xToolStudio'
 
 if [ -f /run/host/usr/share/cachyos-fish-config/cachyos-config.fish ]; then
     sudo mkdir -p /usr/share/cachyos-fish-config

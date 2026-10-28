@@ -80,7 +80,7 @@ desktop_file="$app_dir/xToolStudio.desktop"
     printf '%s\n' "TryExec=$bin_dir/xToolStudio"
     printf '%s\n' 'Terminal=false'
     printf '%s\n' 'Categories=Graphics;Utility;'
-    printf '%s\n' 'StartupNotify=true'
+    printf '%s\n' 'StartupNotify=false'
     printf '%s\n' 'Icon=wine'
     printf '%s\n' 'StartupWMClass=xToolStudio'
 } > "$desktop_file"

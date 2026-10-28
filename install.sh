@@ -284,6 +284,12 @@ enter_container(){
     return ${PIPESTATUS[0]:-0}
 }
 
+verify_container_setup(){
+    enter_container /usr/bin/test -x /usr/local/bin/xToolStudio || return 1
+    enter_container /usr/bin/test -f /usr/share/applications/xToolStudio.desktop || return 1
+    log "INFO" "Verified launcher and desktop entry inside container $CONTAINER_NAME"
+}
+
 write_setup_env(){
     {
         printf 'XTOOL_URL=%q\n' "$XTOOL_URL"
@@ -534,9 +540,13 @@ while [ "$SUCCESS" = false ]; do
     else
         enter_container /bin/bash "$SETUP_DIR/container-setup.sh"
         install_rc=$?
-        if [ $install_rc -eq 0 ]; then
+        if [ $install_rc -eq 0 ] && verify_container_setup; then
             SUCCESS=true
         else
+            if [ $install_rc -eq 0 ]; then
+                install_rc=1
+                log "ERROR" "Container setup returned success, but /usr/local/bin/xToolStudio or its desktop entry is missing inside $CONTAINER_NAME"
+            fi
             if [ "$USE_DNS" = false ]; then
                 log "WARN" "Installation inside container failed (rc=$install_rc). Retrying with DNS fix..."
                 USE_DNS=true
@@ -578,6 +588,8 @@ if [ ${#D_FILES[@]} -gt 0 ]; then
     [ -x "$(command -v update-desktop-database)" ] && update-desktop-database ~/.local/share/applications
     echo -e "${GREEN}Installation successful!${NC}"
     echo -e "You can now find 'xTool Studio' in your app menu."
+    echo "The launcher is inside the '$CONTAINER_NAME' container; the host's /usr/local/bin is not used."
+    echo "Runtime log: $HOME/.cache/xtool-studio-cachy-box/launch.log"
 else
     if [ "$DRY_RUN" = true ]; then
         log "INFO" "DRY RUN: desktop file would be created at ~/.local/share/applications/*xtool*.desktop"

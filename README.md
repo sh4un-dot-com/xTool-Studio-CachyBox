@@ -129,7 +129,7 @@ On FreeBSD it skips Distrobox and the image-source prompt, installs native Wine 
 
 The installer uses these locations:
 
-- Host cache, logs, and copied setup scripts: `~/.cache/xtool-studio-cachy-box/`
+- Host cache, install/runtime logs, and copied setup scripts: `~/.cache/xtool-studio-cachy-box/`
 - Host Wine data and downloaded installer: `~/.local/share/xtool-studio/`
 - Linux launcher inside the container: `/usr/local/bin/xToolStudio`
 - Linux desktop entry inside the container: `/usr/share/applications/xToolStudio.desktop`
@@ -198,6 +198,8 @@ It can also remove `~/.local/share/xtool-studio/`, which contains the Wine prefi
 - Nvidia failures during container creation: configure Podman CDI support first.
 - Blank or unstable rendering: retry with `--gpu 4` to force software rendering.
 - Installer opens but no app launches afterward: finish the xTool Studio installer in Wine, then relaunch the exported desktop entry.
+- On Linux, `/usr/local/bin/xToolStudio` exists inside the `xtool-studio` container, not in the host's `/usr/local/bin`. The exported desktop entry first runs `distrobox-enter`, so an empty host directory is expected. Verify the container copy with `distrobox enter --no-workdir xtool-studio -- ls -l /usr/local/bin/xToolStudio`.
+- If a menu launch shows no window, inspect `~/.cache/xtool-studio-cachy-box/launch.log`, then run `distrobox enter --no-workdir xtool-studio -- /usr/local/bin/xToolStudio` in a terminal to see Wine output directly.
 - FreeBSD: Distrobox is not used. Install `bash` first (`pkg install bash`), then `./install.sh`. Launch with `~/.local/bin/xToolStudio` if the desktop menu does not pick up `~/.local/bin`.
 - FreeBSD GPU: install host drivers yourself (`nvidia-driver` or `drm-kmod`). `--gpu 4` forces software rendering in the launcher.
 - Unsupported host expectation: xTool does not support Linux or FreeBSD officially, so some features may still require a Windows machine.
