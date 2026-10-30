@@ -26,6 +26,7 @@ The project name is now **xTool Studio Cachy Box**.
 - Linux hosts such as CachyOS and Fedora isolate Wine in an Ubuntu Distrobox container.
 - FreeBSD hosts use native Wine from `pkg` (`emulators/wine`) with the same Wine prefix layout.
 - Persistent Wine prefix and installer cache under `~/.local/share/xtool-studio/`.
+- Automatic repair for the xTool Studio 1.9.11 Electron first-run window hang under Wine.
 - Desktop integration through `distrobox-export` on Linux, or a user desktop entry on FreeBSD.
 - Optional local image builds through `containerfile.amd`, `containerfile.intel`, and `containerfile.nvidia`.
 - DNS retry path for container creation when upstream downloads fail due to name resolution.
@@ -197,6 +198,7 @@ It can also remove `~/.local/share/xtool-studio/`, which contains the Wine prefi
 - DNS failures: the installer retries container creation with explicit DNS servers.
 - Nvidia failures during container creation: configure Podman CDI support first.
 - Blank or unstable rendering: retry with `--gpu 4` to force software rendering.
+- xTool Studio 1.9.11 starts processes but shows no window: update this repository and rerun `./install.sh`. The installer applies a validated, same-length Electron compatibility patch to the existing installation. It does not preselect the country, privacy, or telemetry choices. Software rendering fixes the separate Wine pixel-format error but does not fix this startup preload mismatch by itself.
 - Installer opens but no app launches afterward: finish the xTool Studio installer in Wine, then relaunch the exported desktop entry.
 - On Linux, `/usr/local/bin/xToolStudio` exists inside the `xtool-studio` container, not in the host's `/usr/local/bin`. The exported desktop entry first runs `distrobox-enter`, so an empty host directory is expected. Verify the container copy with `distrobox enter --no-workdir xtool-studio -- ls -l /usr/local/bin/xToolStudio`.
 - If a menu launch shows no window, inspect `~/.cache/xtool-studio-cachy-box/launch.log`, then run `distrobox enter --no-workdir xtool-studio -- /usr/local/bin/xToolStudio` in a terminal to see Wine output directly.

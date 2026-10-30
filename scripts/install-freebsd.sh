@@ -47,7 +47,7 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 echo 'Installing FreeBSD packages for native Wine'
-xtool_pkg install -y wine curl
+xtool_pkg install -y wine curl perl5
 xtool_pkg install -y wine-gecko wine-mono cabextract desktop-file-utils || true
 if ! command -v 7z >/dev/null 2>&1 && ! command -v 7zz >/dev/null 2>&1; then
     if ! xtool_pkg install -y 7-zip; then

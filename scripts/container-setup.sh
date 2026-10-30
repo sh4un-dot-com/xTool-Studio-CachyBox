@@ -42,6 +42,7 @@ PACKAGES=(
     ca-certificates
     lsb-release
     locales
+    perl
     sudo
     wine64
     winbind
