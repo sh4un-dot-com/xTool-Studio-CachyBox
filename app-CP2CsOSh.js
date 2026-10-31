@@ -1,0 +1,1 @@
+import{r as e}from"./system-info-ajoSzHg3.js";import{app as t}from"electron/main";var n=async()=>{let n=await e();return{appVersion:t.getVersion(),arch:n?.cpu?.arch,cpu:n?.cpu?.model,memory:n?.memory?.total/1024/1024/1024,osVersion:n?.os?.osVersion,gpu:n?.gpu?.map(e=>({features:e.features,model:e.model??``})),platform:n?.platform}};export{n as getAppInfo};
