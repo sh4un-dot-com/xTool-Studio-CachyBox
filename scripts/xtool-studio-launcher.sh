@@ -33,6 +33,12 @@ unset VSCODE_ESM_ENTRYPOINT
 unset VSCODE_PID
 unset VSCODE_IPC_HOOK
 unset CHROME_DESKTOP
+# Distrobox also forwards the host compositor. Wine talks to X11/XWayland, and
+# EGL_PLATFORM=wayland makes wglSetPixelFormatWINE fail on AMD/NVIDIA.
+unset EGL_PLATFORM
+unset GDK_BACKEND
+unset QT_QPA_PLATFORM
+unset SDL_VIDEODRIVER
 
 is_installer_running() {
 	if command -v pgrep >/dev/null 2>&1; then
@@ -92,6 +98,17 @@ if [ "$force_software_rendering" = "1" ]; then
 	# xTool Studio 1.6.6 exits immediately when Chromium's --disable-gpu
 	# switches are supplied. The Mesa/Wine variables above select llvmpipe
 	# without changing Electron's application arguments.
+else
+	unset LIBGL_ALWAYS_SOFTWARE
+	unset GALLIUM_DRIVER
+	unset MESA_LOADER_DRIVER_OVERRIDE
+	unset ELECTRON_DISABLE_GPU
+	# Host/session Mesa EGL on an NVIDIA GPU fails with "driver (null)".
+	# Prefer the NVIDIA vendor files when they exist; AMD/Intel keep Mesa.
+	if [ -f /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]; then
+		export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+		export __GLX_VENDOR_LIBRARY_NAME="${__GLX_VENDOR_LIBRARY_NAME:-nvidia}"
+	fi
 fi
 
 APP_EXE="$(find_installed_exe)"
@@ -109,6 +126,19 @@ if [ -z "$APP_EXE" ]; then
 fi
 
 printf 'Using executable: %s\n' "$APP_EXE"
+
+# xTool Studio 1.9.11 (Chromium 136) defaults to DirectComposition on Windows.
+# Wine's dcomp is unimplemented, the GPU process dies, and the first-run
+# country window never reaches did-finish-load. ANGLE GL avoids that path.
+# 1.6.6 still exits if Chromium --disable-gpu arguments are supplied.
+APP_ASAR="$(dirname "$APP_EXE")/resources/app.asar"
+if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/dev/null 2>&1; then
+	if [ "$force_software_rendering" = "1" ]; then
+		echo 'WARN: software rendering often cannot paint xTool Studio 1.9.11 first-run windows; the Nvidia/AMD/Intel GPU install option is recommended'
+	fi
+	set -- --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition "$@"
+	printf 'xTool 1.9.11 Chromium flags:%s\n' " --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition"
+fi
 
 # Missing stdin is redirected so Electron/Node does not crash with EBADF.
 # Keep this process in the Distrobox enter session until Wine exits so
