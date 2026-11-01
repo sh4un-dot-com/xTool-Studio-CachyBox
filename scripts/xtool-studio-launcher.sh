@@ -140,10 +140,24 @@ if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/de
 	if [ "$force_software_rendering" = "1" ]; then
 		echo 'WARN: software rendering often cannot paint xTool Studio 1.9.11 first-run windows; the Nvidia/AMD/Intel GPU install option is recommended'
 	fi
-	set -- --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition \
+	# Wine spoofs some AMD iGPUs as old HD 5xxx cards. Chromium then leaves
+	# the GPU inactive and the country window stays black. ANGLE SwiftShader
+	# still paints that first-run UI. NVIDIA/Intel keep ANGLE GL.
+	angle_backend=gl
+	if [ "$force_software_rendering" != "1" ]; then
+		for vendor_file in /sys/class/drm/card*/device/vendor; do
+			[ -r "$vendor_file" ] || continue
+			if grep -qiE '^0x1002' "$vendor_file"; then
+				angle_backend=swiftshader
+				echo 'AMD GPU detected: using ANGLE SwiftShader for xTool Studio 1.9.11 first-run paint'
+				break
+			fi
+		done
+	fi
+	set -- --use-gl=angle --use-angle="$angle_backend" --enable-unsafe-swiftshader --disable-direct-composition \
 		--disable-renderer-backgrounding --disable-backgrounding-occluded-windows \
 		--disable-background-timer-throttling --ignore-gpu-blocklist "$@"
-	printf 'xTool 1.9.11 Chromium flags:%s\n' " --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-background-timer-throttling --ignore-gpu-blocklist"
+	printf 'xTool 1.9.11 Chromium flags:%s\n' " --use-gl=angle --use-angle=${angle_backend} --enable-unsafe-swiftshader --disable-direct-composition --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-background-timer-throttling --ignore-gpu-blocklist"
 fi
 
 start_first_run_mapper() {

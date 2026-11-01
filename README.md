@@ -26,7 +26,7 @@ The project name is now **xTool Studio Cachy Box**.
 - Linux hosts such as CachyOS and Fedora isolate Wine in an Ubuntu Distrobox container.
 - FreeBSD hosts use native Wine from `pkg` (`emulators/wine`) with the same Wine prefix layout.
 - Persistent Wine prefix and installer cache under `~/.local/share/xtool-studio/`.
-- Automatic repair for the xTool Studio 1.9.11 first-run country, privacy, and plan windows, which Wine on XWayland otherwise never maps. The launcher also maps those hidden dialogs onto the display so the country prompt can appear.
+- Automatic repair for the xTool Studio 1.9.11 first-run country, privacy, and plan windows, which Wine on XWayland otherwise never maps. The launcher maps those hidden dialogs onto the display and keeps remapping them if GNOME/Wine hides them again before Chromium paints. AMD installs use ANGLE SwiftShader so that country UI is not a black frame.
 - Desktop integration through `distrobox-export` on Linux, or a user desktop entry on FreeBSD.
 - Optional local image builds through `containerfile.amd`, `containerfile.intel`, and `containerfile.nvidia`.
 - DNS retry path for container creation when upstream downloads fail due to name resolution.
