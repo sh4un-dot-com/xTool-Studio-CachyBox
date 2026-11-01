@@ -26,7 +26,7 @@ The project name is now **xTool Studio Cachy Box**.
 - Linux hosts such as CachyOS and Fedora isolate Wine in an Ubuntu Distrobox container.
 - FreeBSD hosts use native Wine from `pkg` (`emulators/wine`) with the same Wine prefix layout.
 - Persistent Wine prefix and installer cache under `~/.local/share/xtool-studio/`.
-- Automatic repair for the xTool Studio 1.9.11 first-run country, privacy, and plan windows, which Wine on XWayland otherwise never maps.
+- Automatic repair for the xTool Studio 1.9.11 first-run country, privacy, and plan windows, which Wine on XWayland otherwise never maps. The launcher also maps those hidden dialogs onto the display so the country prompt can appear.
 - Desktop integration through `distrobox-export` on Linux, or a user desktop entry on FreeBSD.
 - Optional local image builds through `containerfile.amd`, `containerfile.intel`, and `containerfile.nvidia`.
 - DNS retry path for container creation when upstream downloads fail due to name resolution.
@@ -198,7 +198,7 @@ It can also remove `~/.local/share/xtool-studio/`, which contains the Wine prefi
 - DNS failures: the installer retries container creation with explicit DNS servers.
 - Nvidia failures during container creation: configure Podman CDI support first.
 - Blank or unstable rendering: retry with `--gpu 4` to force software rendering.
-- xTool Studio 1.9.11 starts processes but shows no window: update this repository and rerun `./install.sh`. The installer gives the first-run country, privacy, and plan windows a normal frame (they stay hidden until the page loads; showing them immediately crashes under Wine) and the launcher unsets host Wayland EGL, then passes Chromium ANGLE flags so Wine can paint. It does not preselect those choices. Use the Nvidia, AMD, or Intel GPU option; Generic/software rendering often still shows no first-run window on 1.9.11. Look for the country prompt on the primary display. A later rerun reports that the patch is already applied.
+- xTool Studio 1.9.11 starts processes but shows no window: update this repository and rerun `./install.sh`. The installer gives the first-run country, privacy, and plan windows a normal frame, the launcher unsets host Wayland EGL, passes Chromium ANGLE flags, and maps those hidden Wine windows onto XWayland so the country prompt can appear. Showing the windows from Electron at creation time native-crashes under Wine. The installer does not preselect country, privacy, or telemetry. Use the Nvidia, AMD, or Intel GPU option; Generic/software rendering often still cannot paint this first-run UI. Look for **Please select your country or region.** on the primary display. A later rerun reports that the window-frame patch is already applied.
 - Installer opens but no app launches afterward: finish the xTool Studio installer in Wine, then relaunch the exported desktop entry.
 - On Linux, `/usr/local/bin/xToolStudio` exists inside the `xtool-studio` container, not in the host's `/usr/local/bin`. The exported desktop entry first runs `distrobox-enter`, so an empty host directory is expected. Verify the container copy with `distrobox enter --no-workdir xtool-studio -- ls -l /usr/local/bin/xToolStudio`.
 - If a menu launch shows no window, inspect `~/.cache/xtool-studio-cachy-box/launch.log`, then run `distrobox enter --no-workdir xtool-studio -- /usr/local/bin/xToolStudio` in a terminal to see Wine output directly.

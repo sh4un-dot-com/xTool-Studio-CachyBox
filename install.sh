@@ -23,6 +23,7 @@ CONTAINER_SETUP_SRC="$SCRIPT_DIR/scripts/container-setup.sh"
 FREEBSD_SETUP_SRC="$SCRIPT_DIR/scripts/install-freebsd.sh"
 PAYLOAD_SRC="$SCRIPT_DIR/scripts/install-payload.sh"
 LAUNCHER_SRC="$SCRIPT_DIR/scripts/xtool-studio-launcher.sh"
+MAPPER_SRC="$SCRIPT_DIR/scripts/xtool-map-windows.py"
 
 log(){
     local level="$1"; shift
@@ -295,6 +296,7 @@ write_setup_env(){
         printf 'XTOOL_URL=%q\n' "$XTOOL_URL"
         printf 'XTOOL_FORCE_SOFTWARE_RENDERING=%q\n' "$XTOOL_FORCE_SOFTWARE_RENDERING"
         printf 'XTOOL_LAUNCHER_SRC=%q\n' "$SETUP_DIR/xtool-studio-launcher.sh"
+        printf 'XTOOL_MAPPER_SRC=%q\n' "$SETUP_DIR/xtool-map-windows.py"
         printf 'XTOOL_SETUP_DIR=%q\n' "$SETUP_DIR"
         printf 'XTOOL_PAYLOAD_LIB=%q\n' "$SETUP_DIR/install-payload.sh"
         printf 'XTOOL_DRY_RUN=%q\n' "$DRY_RUN"
@@ -302,7 +304,7 @@ write_setup_env(){
 }
 
 prepare_container_setup(){
-    if [ ! -f "$CONTAINER_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ] || [ ! -f "$PAYLOAD_SRC" ]; then
+    if [ ! -f "$CONTAINER_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ] || [ ! -f "$PAYLOAD_SRC" ] || [ ! -f "$MAPPER_SRC" ]; then
         fail "Missing installer scripts in $SCRIPT_DIR/scripts. Re-clone the repository and retry."
     fi
 
@@ -310,12 +312,13 @@ prepare_container_setup(){
     cp -f "$CONTAINER_SETUP_SRC" "$SETUP_DIR/container-setup.sh"
     cp -f "$LAUNCHER_SRC" "$SETUP_DIR/xtool-studio-launcher.sh"
     cp -f "$PAYLOAD_SRC" "$SETUP_DIR/install-payload.sh"
-    chmod 0755 "$SETUP_DIR/container-setup.sh" "$SETUP_DIR/xtool-studio-launcher.sh" "$SETUP_DIR/install-payload.sh"
+    cp -f "$MAPPER_SRC" "$SETUP_DIR/xtool-map-windows.py"
+    chmod 0755 "$SETUP_DIR/container-setup.sh" "$SETUP_DIR/xtool-studio-launcher.sh" "$SETUP_DIR/install-payload.sh" "$SETUP_DIR/xtool-map-windows.py"
     write_setup_env
 }
 
 prepare_freebsd_setup(){
-    if [ ! -f "$FREEBSD_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ] || [ ! -f "$PAYLOAD_SRC" ]; then
+    if [ ! -f "$FREEBSD_SETUP_SRC" ] || [ ! -f "$LAUNCHER_SRC" ] || [ ! -f "$PAYLOAD_SRC" ] || [ ! -f "$MAPPER_SRC" ]; then
         fail "Missing FreeBSD installer scripts in $SCRIPT_DIR/scripts. Re-clone the repository and retry."
     fi
 
@@ -323,7 +326,8 @@ prepare_freebsd_setup(){
     cp -f "$FREEBSD_SETUP_SRC" "$SETUP_DIR/install-freebsd.sh"
     cp -f "$LAUNCHER_SRC" "$SETUP_DIR/xtool-studio-launcher.sh"
     cp -f "$PAYLOAD_SRC" "$SETUP_DIR/install-payload.sh"
-    chmod 0755 "$SETUP_DIR/install-freebsd.sh" "$SETUP_DIR/xtool-studio-launcher.sh" "$SETUP_DIR/install-payload.sh"
+    cp -f "$MAPPER_SRC" "$SETUP_DIR/xtool-map-windows.py"
+    chmod 0755 "$SETUP_DIR/install-freebsd.sh" "$SETUP_DIR/xtool-studio-launcher.sh" "$SETUP_DIR/install-payload.sh" "$SETUP_DIR/xtool-map-windows.py"
     write_setup_env
 }
 

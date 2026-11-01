@@ -19,6 +19,7 @@ source "$ENV_FILE"
 : "${XTOOL_LAUNCHER_SRC:?XTOOL_LAUNCHER_SRC is required}"
 XTOOL_FORCE_SOFTWARE_RENDERING="${XTOOL_FORCE_SOFTWARE_RENDERING:-1}"
 PAYLOAD_LIB="${XTOOL_PAYLOAD_LIB:-$SETUP_DIR/install-payload.sh}"
+XTOOL_MAPPER_SRC="${XTOOL_MAPPER_SRC:-$SETUP_DIR/xtool-map-windows.py}"
 
 if [ ! -f "$XTOOL_LAUNCHER_SRC" ]; then
     echo "Missing launcher script: $XTOOL_LAUNCHER_SRC" >&2
@@ -63,6 +64,7 @@ PACKAGES=(
     libwebkit2gtk-4.1-0
     libjavascriptcoregtk-4.1-0
     libwayland-server0
+    python3
 )
 
 sudo apt-get install -y "${PACKAGES[@]}"
@@ -86,6 +88,9 @@ xtool_install_payload
 sudo mkdir -p /usr/local/bin
 sudo install -m 0755 "$XTOOL_LAUNCHER_SRC" /usr/local/bin/xToolStudio
 sudo test -x /usr/local/bin/xToolStudio
+if [ -f "$XTOOL_MAPPER_SRC" ]; then
+    sudo install -m 0755 "$XTOOL_MAPPER_SRC" /usr/local/bin/xtool-map-windows.py
+fi
 printf '%s\n' \
     '[Desktop Entry]' \
     'Type=Application' \

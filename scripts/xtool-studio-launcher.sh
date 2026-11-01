@@ -10,6 +10,8 @@ INSTALLER_TEMP_DIR="$PREFIX_DIR/drive_c/users/$USER_NAME/Temp/xTool-Studio"
 RENDER_FLAG_FILE="$APP_HOME/force-software-rendering"
 LAUNCH_LOG_DIR="$HOME/.cache/xtool-studio-cachy-box"
 LAUNCH_LOG="$LAUNCH_LOG_DIR/launch.log"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+MAPPER_PID=""
 
 # Desktop launchers normally discard stdout/stderr. Preserve it so a failed
 # Wine/Electron startup can be diagnosed without changing the menu entry.
@@ -131,13 +133,53 @@ printf 'Using executable: %s\n' "$APP_EXE"
 # Wine's dcomp is unimplemented, the GPU process dies, and the first-run
 # country window never reaches did-finish-load. ANGLE GL avoids that path.
 # 1.6.6 still exits if Chromium --disable-gpu arguments are supplied.
+is_xtool_1911=0
 APP_ASAR="$(dirname "$APP_EXE")/resources/app.asar"
 if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/dev/null 2>&1; then
+	is_xtool_1911=1
 	if [ "$force_software_rendering" = "1" ]; then
 		echo 'WARN: software rendering often cannot paint xTool Studio 1.9.11 first-run windows; the Nvidia/AMD/Intel GPU install option is recommended'
 	fi
-	set -- --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition "$@"
-	printf 'xTool 1.9.11 Chromium flags:%s\n' " --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition"
+	set -- --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition \
+		--disable-renderer-backgrounding --disable-backgrounding-occluded-windows \
+		--disable-background-timer-throttling --ignore-gpu-blocklist "$@"
+	printf 'xTool 1.9.11 Chromium flags:%s\n' " --use-gl=angle --use-angle=gl --enable-unsafe-swiftshader --disable-direct-composition --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-background-timer-throttling --ignore-gpu-blocklist"
+fi
+
+start_first_run_mapper() {
+	mapper=""
+	for cand in \
+		"$SCRIPT_DIR/xtool-map-windows.py" \
+		"$LAUNCH_LOG_DIR/xtool-map-windows.py"
+	do
+		if [ -f "$cand" ]; then
+			mapper="$cand"
+			break
+		fi
+	done
+	if [ -z "$mapper" ]; then
+		echo 'WARN: xTool first-run window mapper is missing; country/privacy windows may stay hidden'
+		return 0
+	fi
+	if ! command -v python3 >/dev/null 2>&1; then
+		echo 'WARN: python3 is required to map xTool first-run windows; country/privacy windows may stay hidden'
+		return 0
+	fi
+	python3 "$mapper" &
+	MAPPER_PID=$!
+	printf 'Started xTool first-run window mapper (pid %s)\n' "$MAPPER_PID"
+}
+
+stop_first_run_mapper() {
+	if [ -n "$MAPPER_PID" ]; then
+		kill "$MAPPER_PID" >/dev/null 2>&1 || true
+		wait "$MAPPER_PID" >/dev/null 2>&1 || true
+		MAPPER_PID=""
+	fi
+}
+
+if [ "$is_xtool_1911" = "1" ]; then
+	start_first_run_mapper
 fi
 
 # Missing stdin is redirected so Electron/Node does not crash with EBADF.
@@ -147,4 +189,5 @@ if [ ! -t 0 ]; then
 	exec </dev/null
 fi
 env WINEPREFIX="$PREFIX_DIR" wine start /unix "$APP_EXE" "$@"
-exec env WINEPREFIX="$PREFIX_DIR" wineserver -w
+env WINEPREFIX="$PREFIX_DIR" wineserver -w
+stop_first_run_mapper

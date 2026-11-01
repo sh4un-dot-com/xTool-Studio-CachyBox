@@ -17,6 +17,7 @@ source "$ENV_FILE"
 : "${XTOOL_URL:?XTOOL_URL is required}"
 : "${XTOOL_LAUNCHER_SRC:?XTOOL_LAUNCHER_SRC is required}"
 XTOOL_FORCE_SOFTWARE_RENDERING="${XTOOL_FORCE_SOFTWARE_RENDERING:-1}"
+XTOOL_MAPPER_SRC="${XTOOL_MAPPER_SRC:-$SETUP_DIR/xtool-map-windows.py}"
 
 if [ ! -f "$XTOOL_LAUNCHER_SRC" ]; then
     echo "Missing launcher script: $XTOOL_LAUNCHER_SRC" >&2
@@ -48,6 +49,7 @@ fi
 
 echo 'Installing FreeBSD packages for native Wine'
 xtool_pkg install -y wine curl perl5
+xtool_pkg install -y python3 || echo 'WARN: python3 is unavailable; the first-run window mapper will be skipped'
 xtool_pkg install -y wine-gecko wine-mono cabextract desktop-file-utils || true
 if ! command -v 7z >/dev/null 2>&1 && ! command -v 7zz >/dev/null 2>&1; then
     if ! xtool_pkg install -y 7-zip; then
@@ -68,6 +70,9 @@ bin_dir="$HOME/.local/bin"
 app_dir="$HOME/.local/share/applications"
 mkdir -p "$bin_dir" "$app_dir"
 install -m 0755 "$XTOOL_LAUNCHER_SRC" "$bin_dir/xToolStudio"
+if [ -f "$XTOOL_MAPPER_SRC" ]; then
+    install -m 0755 "$XTOOL_MAPPER_SRC" "$bin_dir/xtool-map-windows.py"
+fi
 
 desktop_file="$app_dir/xToolStudio.desktop"
 {
