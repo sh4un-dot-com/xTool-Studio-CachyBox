@@ -251,6 +251,69 @@ xtool_patch_electron_startup() {
     fi
 }
 
+# Always wineboot the xTool prefix. A Distrobox reinstall keeps the host
+# prefix, so a leftover Wine 9 prefix must be upgraded to Wine 11 before
+# Electron 36 runs.
+xtool_upgrade_prefix() {
+    local prefix_dir="$1"
+    local ver
+
+    if ! command -v wine >/dev/null 2>&1 && ! command -v wineboot >/dev/null 2>&1; then
+        echo "Wine is not installed; cannot initialize the prefix." >&2
+        return 1
+    fi
+
+    ver="$(command -v wine >/dev/null 2>&1 && wine --version 2>/dev/null || echo unknown)"
+    if [ ! -d "$prefix_dir" ]; then
+        echo "Initializing Wine prefix for $ver"
+    else
+        echo "Updating existing Wine prefix for $ver"
+    fi
+    mkdir -p "$prefix_dir"
+    if command -v wineboot >/dev/null 2>&1; then
+        WINEPREFIX="$prefix_dir" WINEDEBUG=-all wineboot -u || {
+            echo "WARN: wineboot -u failed for $prefix_dir" >&2
+        }
+    else
+        WINEPREFIX="$prefix_dir" WINEDEBUG=-all wine wineboot -u || {
+            echo "WARN: wineboot -u failed for $prefix_dir" >&2
+        }
+    fi
+    WINEPREFIX="$prefix_dir" wineserver -w >/dev/null 2>&1 || true
+    return 0
+}
+
+# Wine 9 GPU/crash caches keep Chromium on the spoofed HD 5600 path after
+# a Wine 11 upgrade. Drop those caches only; leave country/privacy state.
+xtool_clear_electron_gpu_caches() {
+    local prefix_dir="$1"
+    local user_name="$2"
+    local base cache
+    local cleared=0
+
+    for base in \
+        "$prefix_dir/drive_c/users/$user_name/AppData/Roaming/xTool Studio" \
+        "$prefix_dir/drive_c/users/$user_name/AppData/Local/xTool Studio"
+    do
+        [ -d "$base" ] || continue
+        for cache in GPUCache ShaderCache GrShaderCache DawnGraphiteCache DawnWebGPUCache Crashpad; do
+            if [ -e "$base/$cache" ]; then
+                echo "Clearing stale Electron cache: $base/$cache"
+                rm -rf "$base/$cache"
+                cleared=1
+            fi
+        done
+        if [ -d "$base/Code Cache" ]; then
+            echo "Clearing stale Electron cache: $base/Code Cache"
+            rm -rf "$base/Code Cache"
+            cleared=1
+        fi
+    done
+    if [ "$cleared" -eq 1 ]; then
+        echo 'Cleared stale Electron GPU/crash caches from the Wine 9 prefix'
+    fi
+}
+
 xtool_install_payload() {
     local app_home installer_dir payload_dir prefix_dir
     local url_record extracted_url_record installer_path
@@ -277,6 +340,9 @@ xtool_install_payload() {
 
     mkdir -p "$installer_dir" "$app_home"
     printf '%s\n' "$XTOOL_FORCE_SOFTWARE_RENDERING" > "$app_home/force-software-rendering"
+    if command -v wine >/dev/null 2>&1; then
+        wine --version >"$app_home/wine-version" 2>/dev/null || true
+    fi
 
     if [ ! -f "$installer_path" ] || [ ! -f "$url_record" ] || [ "$(cat "$url_record")" != "$XTOOL_URL" ]; then
         echo 'Downloading xTool Studio Windows installer (with retries)'
@@ -284,16 +350,8 @@ xtool_install_payload() {
         printf '%s\n' "$XTOOL_URL" > "$url_record"
     fi
 
-    if [ ! -d "$prefix_dir" ]; then
-        echo 'Initializing Wine prefix'
-        if command -v wineboot >/dev/null 2>&1; then
-            WINEPREFIX="$prefix_dir" wineboot -u >/dev/null 2>&1 || true
-        elif command -v wine >/dev/null 2>&1; then
-            WINEPREFIX="$prefix_dir" wine wineboot -u >/dev/null 2>&1 || true
-        else
-            echo "Wine is not installed; cannot initialize the prefix." >&2
-            return 1
-        fi
+    if ! xtool_upgrade_prefix "$prefix_dir"; then
+        return 1
     fi
 
     if [ ! -f "$app_install_dir/xTool Studio.exe" ] || [ ! -f "$extracted_url_record" ] || [ "$(cat "$extracted_url_record")" != "$XTOOL_URL" ]; then
@@ -322,4 +380,8 @@ xtool_install_payload() {
     # them hidden+framed because show() native-crashes. Keep contextIsolation
     # off so country-select.html can use window.require('electron').
     xtool_patch_electron_startup "$app_install_dir/resources/app.asar"
+    if [ -f "$app_install_dir/resources/app.asar" ] && \
+       [ "$(xtool_count_literal 'createCountrySelectWindow' "$app_install_dir/resources/app.asar")" -gt 0 ]; then
+        xtool_clear_electron_gpu_caches "$prefix_dir" "$user_name"
+    fi
 }

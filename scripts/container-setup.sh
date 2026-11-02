@@ -34,6 +34,7 @@ fi
 xtool_install_wine() {
     local codename winehq_src winehq_key ver major
 
+    hash -r 2>/dev/null || true
     if command -v wine >/dev/null 2>&1; then
         ver="$(wine --version 2>/dev/null || true)"
         major="$(printf '%s\n' "$ver" | sed -n 's/^wine-\([0-9][0-9]*\).*/\1/p' | head -n 1)"
@@ -41,7 +42,7 @@ xtool_install_wine() {
             echo "Wine already new enough for xTool Studio 1.9.11: $ver"
             return 0
         fi
-        echo "Found $ver; replacing Ubuntu Wine 9 with WineHQ 11"
+        echo "Found ${ver:-no wine}; replacing Ubuntu Wine 9 with WineHQ 11"
     fi
 
     echo 'Enabling i386 architecture for Wine'
@@ -50,38 +51,42 @@ xtool_install_wine() {
 
     # Ubuntu 24.04's wine64 is 9.0. Electron 36 BrowserWindow.show()
     # native-crashes there, so the country dialog never paints. WineHQ
-    # stable is Wine 11 and can show a framed first-run window.
-    sudo apt-get install -y gnupg wget
+    # stable is Wine 11 and can show a framed first-run window. Do not
+    # fall back to Wine 9: that path looks like a successful install and
+    # then a black country window.
+    sudo apt-get install -y ca-certificates curl gnupg wget
     sudo mkdir -pm755 /etc/apt/keyrings
     winehq_key=/etc/apt/keyrings/winehq-archive.key
-    if [ ! -s "$winehq_key" ]; then
-        echo 'Adding the WineHQ repository key'
-        curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | sudo gpg --dearmor -o "$winehq_key"
-    fi
+    echo 'Adding the WineHQ repository key'
+    # WineHQ's .sources file Signed-By's this path. Keep the upstream
+    # armored key as-is; apt accepts it without dearmoring.
+    sudo curl -fsSL --retry 5 --retry-delay 2 -o "$winehq_key" \
+        https://dl.winehq.org/wine-builds/winehq.key
     . /etc/os-release
     codename="${VERSION_CODENAME:-noble}"
     winehq_src="/etc/apt/sources.list.d/winehq-${codename}.sources"
-    if [ ! -s "$winehq_src" ]; then
-        echo "Adding the WineHQ ${codename} repository"
-        sudo curl -fsSL -o "$winehq_src" \
-            "https://dl.winehq.org/wine-builds/ubuntu/dists/${codename}/winehq-${codename}.sources"
-    fi
+    echo "Adding the WineHQ ${codename} repository"
+    sudo curl -fsSL --retry 5 --retry-delay 2 -o "$winehq_src" \
+        "https://dl.winehq.org/wine-builds/ubuntu/dists/${codename}/winehq-${codename}.sources"
     sudo apt-get update
 
-    echo 'Installing WineHQ stable (Wine 11)'
-    sudo apt-get remove -y wine64 wine32 wine32:i386 wine wine-stable winehq-stable >/dev/null 2>&1 || true
-    if sudo apt-get install -y --install-recommends winehq-stable; then
-        echo "WineHQ installed: $(wine --version 2>/dev/null || echo unknown)"
-        return 0
-    fi
+    echo 'Removing Ubuntu Wine 9 packages if they are present'
+    sudo apt-get remove -y wine64 wine32 wine32:i386 wine libwine fonts-wine || true
 
-    echo 'WARN: WineHQ stable failed; falling back to Ubuntu wine64 (Wine 9). xTool Studio 1.9.11 first-run show() will native-crash.' >&2
-    sudo apt-get install -y wine64 || return 1
-    if ! sudo apt-get install -y wine32:i386; then
-        echo 'wine32:i386 is unavailable; trying wine32'
-        sudo apt-get install -y wine32 || echo 'WARN: continuing without wine32; 64-bit Wine will still be used'
+    echo 'Installing WineHQ stable (Wine 11)'
+    if ! sudo apt-get install -y --install-recommends winehq-stable; then
+        echo 'WineHQ stable failed; trying WineHQ devel' >&2
+        sudo apt-get install -y --install-recommends winehq-devel || true
     fi
-    echo "Fallback Wine: $(wine --version 2>/dev/null || echo unknown)"
+    hash -r 2>/dev/null || true
+    ver="$(command -v wine >/dev/null 2>&1 && wine --version 2>/dev/null || true)"
+    major="$(printf '%s\n' "$ver" | sed -n 's/^wine-\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+    if [ -z "$major" ] || [ "$major" -lt 10 ]; then
+        echo "ERROR: xTool Studio 1.9.11 needs Wine 10+ (WineHQ 11). Found: ${ver:-no wine}." >&2
+        echo 'WineHQ did not install. Check that dl.winehq.org is reachable and i386 packages installed.' >&2
+        return 1
+    fi
+    echo "WineHQ installed: $ver"
 }
 
 echo 'Running: apt update'

@@ -130,11 +130,6 @@ fi
 printf 'Using executable: %s\n' "$APP_EXE"
 wine_ver="$(WINEPREFIX="$PREFIX_DIR" wine --version 2>/dev/null || echo unknown)"
 printf 'Wine: %s\n' "$wine_ver"
-case "$wine_ver" in
-	wine-[0-9].*|wine-9.*)
-		echo 'WARN: Wine 9 native-crashes when xTool Studio 1.9.11 shows the country window; rerun ./install.sh so the container can install WineHQ 11'
-		;;
-esac
 
 # xTool Studio 1.9.11 (Chromium 136) defaults to DirectComposition on Windows.
 # Wine's dcomp is unimplemented, the GPU process dies, and the first-run
@@ -144,6 +139,14 @@ is_xtool_1911=0
 APP_ASAR="$(dirname "$APP_EXE")/resources/app.asar"
 if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/dev/null 2>&1; then
 	is_xtool_1911=1
+	# Glob: wine- + one digit + literal '.'  (wine-9.0 matches, wine-11.0 does not)
+	case "$wine_ver" in
+		wine-[0-9].*|wine-9.*)
+			echo 'ERROR: Wine 9 native-crashes when xTool Studio 1.9.11 shows the country window.'
+			echo 'Rerun ./install.sh so the container can install WineHQ 11. launch.log must show Wine: wine-11.'
+			exit 3
+			;;
+	esac
 	if [ "$force_software_rendering" = "1" ]; then
 		echo 'WARN: software rendering often cannot paint xTool Studio 1.9.11 first-run windows; the Nvidia/AMD/Intel GPU install option is recommended'
 	fi
