@@ -5,8 +5,13 @@ xTool 1.9.11 country/privacy/plan dialogs are patched to show:true with a normal
 frame so Wine maps a real HWND. This helper is a safety net: GNOME/Mutter may
 still unmap a Distrobox X11 client. Remap those dialogs, rewrite
 WM_CLIENT_MACHINE to the host name so GNOME does not treat them as remote,
-grow the client if GNOME CSD clipped Confirm, and leave IME/ANGLE/Start Page
-surfaces alone.
+grow the client if GNOME CSD clipped Confirm, and leave IME/ANGLE surfaces
+alone.
+
+On GNOME-family compositors, also drop WM decorations (Mutter stacks CSD on
+Wine's framed HWND and clips the Start Page menu) and clear always-on-top on
+the Start Page. KWin replaces the caption instead of stacking, so KDE is left
+decorated.
 
 Frameless show:true native-crashes under Wine; do not strip the window frame.
 """
@@ -60,6 +65,7 @@ SubstructureRedirectMask = 1 << 19
 RootEventMask = SubstructureNotifyMask | SubstructureRedirectMask
 NetWmStateRemove = 0
 NormalState = 1
+MWM_HINTS_DECORATIONS = 2
 
 _running = True
 
@@ -258,6 +264,23 @@ def walk(lib, dpy, win, rows):
             lib.XFree(children)
 
 
+def is_gnome_family():
+    blob = " ".join(
+        [
+            os.environ.get("XDG_CURRENT_DESKTOP", ""),
+            os.environ.get("DESKTOP_SESSION", ""),
+            os.environ.get("XDG_SESSION_DESKTOP", ""),
+        ]
+    ).lower()
+    if any(token in blob for token in ("gnome", "zorin", "budgie", "cinnamon", "unity")):
+        return True
+    return bool(os.environ.get("GNOME_SHELL_SESSION_MODE") or os.environ.get("GNOME_SETUP_DISPLAY"))
+
+
+def is_start_page(name):
+    return "start page" in (name or "").lower()
+
+
 def is_first_run_dialog(name, cls, attrs):
     blob = f"{name} {cls}".lower()
     if any(skip in blob for skip in SKIP_NAMES):
@@ -267,6 +290,19 @@ def is_first_run_dialog(name, cls, attrs):
     if attrs.width > MAX_W or attrs.height > MAX_H:
         return False
     return any(keep in blob for keep in KEEP_NAMES)
+
+
+def should_undecorate(name, cls, attrs):
+    blob = f"{name} {cls}".lower()
+    if any(skip in blob for skip in SKIP_NAMES) and "start page" not in blob:
+        return False
+    if is_start_page(name) or is_first_run_dialog(name, cls, attrs):
+        return True
+    if attrs.width < MIN_W or attrs.height < MIN_H:
+        return False
+    if "ime" in blob or "angle intermediate" in blob:
+        return False
+    return "xtool studio" in blob
 
 
 def grow_target(name):
@@ -322,6 +358,24 @@ def set_normal_state(lib, dpy, win, wm_state_atom):
     )
 
 
+def set_motif_undecorated(lib, dpy, win, motif_atom):
+    # flags=MWM_HINTS_DECORATIONS, decorations=0. Mutter then skips CSD.
+    data = (c_long * 5)(MWM_HINTS_DECORATIONS, 0, 0, 0, 0)
+    lib.XChangeProperty(dpy, win, motif_atom, motif_atom, 32, PropModeReplace, data, 5)
+
+
+def drop_above_state(lib, dpy, win, atoms):
+    send_client_message(
+        lib,
+        dpy,
+        lib.XDefaultRootWindow(dpy),
+        win,
+        atoms["_NET_WM_STATE"],
+        RootEventMask,
+        (NetWmStateRemove, atoms["_NET_WM_STATE_ABOVE"], 0, 1, 0),
+    )
+
+
 def maybe_grow_window(lib, dpy, win, name, attrs, grown):
     if win in grown:
         return False
@@ -362,17 +416,52 @@ def reveal_window(lib, dpy, win, atoms, hostname, selected):
     )
 
 
-def map_candidates(lib, dpy, atoms, hostname, seen, selected, remap_counts, retitled=None, grown=None):
+def map_candidates(
+    lib,
+    dpy,
+    atoms,
+    hostname,
+    seen,
+    selected,
+    remap_counts,
+    retitled=None,
+    grown=None,
+    undecorated=None,
+    unpinned=None,
+    gnome=None,
+):
     if retitled is None:
         retitled = set()
     if grown is None:
         grown = set()
+    if undecorated is None:
+        undecorated = set()
+    if unpinned is None:
+        unpinned = set()
+    if gnome is None:
+        gnome = is_gnome_family()
     rows = []
     walk(lib, dpy, lib.XDefaultRootWindow(dpy), rows)
     newly = []
     remapped = []
     tuned = False
     for win, name, cls, attrs in rows:
+        if gnome and win not in undecorated and should_undecorate(name, cls, attrs):
+            set_motif_undecorated(lib, dpy, win, atoms["_MOTIF_WM_HINTS"])
+            undecorated.add(win)
+            tuned = True
+            print(
+                f"xtool-map-windows: undecorated 0x{win:x} name={name!r}",
+                flush=True,
+            )
+        if gnome and is_start_page(name) and win not in unpinned:
+            drop_above_state(lib, dpy, win, atoms)
+            unpinned.add(win)
+            tuned = True
+            print(
+                f"xtool-map-windows: dropped always-on-top on 0x{win:x} name={name!r}",
+                flush=True,
+            )
         if not is_first_run_dialog(name, cls, attrs):
             continue
         if win not in retitled:
@@ -429,7 +518,9 @@ def _atoms(lib, dpy):
         "WM_STATE": intern(lib, dpy, b"WM_STATE"),
         "_NET_WM_STATE": intern(lib, dpy, b"_NET_WM_STATE"),
         "_NET_WM_STATE_HIDDEN": intern(lib, dpy, b"_NET_WM_STATE_HIDDEN"),
+        "_NET_WM_STATE_ABOVE": intern(lib, dpy, b"_NET_WM_STATE_ABOVE"),
         "_NET_ACTIVE_WINDOW": intern(lib, dpy, b"_NET_ACTIVE_WINDOW"),
+        "_MOTIF_WM_HINTS": intern(lib, dpy, b"_MOTIF_WM_HINTS"),
     }
 
 
@@ -457,9 +548,10 @@ def main():
 
     hostname = host_machine_name()
     atoms = _atoms(lib, dpy)
+    gnome = is_gnome_family()
     print(
         "xtool-map-windows: watching for hidden first-run windows "
-        f"host={hostname!r} display={display_name}",
+        f"host={hostname!r} display={display_name} gnome_family={gnome}",
         flush=True,
     )
     deadline = time.time() + timeout if timeout > 0 else None
@@ -468,11 +560,24 @@ def main():
     remap_counts = {}
     retitled = set()
     grown = set()
+    undecorated = set()
+    unpinned = set()
     while _running:
         if deadline is not None and time.time() >= deadline:
             break
         newly, remapped = map_candidates(
-            lib, dpy, atoms, hostname, seen, selected, remap_counts, retitled, grown
+            lib,
+            dpy,
+            atoms,
+            hostname,
+            seen,
+            selected,
+            remap_counts,
+            retitled,
+            grown,
+            undecorated,
+            unpinned,
+            gnome,
         )
         for win, name, attrs in newly:
             print(
@@ -511,6 +616,43 @@ def selftest():
     assert not is_first_run_dialog("Default IME", "xtool studio.exe", Fake(712, 446))
     assert not is_first_run_dialog("ANGLE Intermediate Window", "xtool studio.exe", Fake(1200, 800))
     assert not is_first_run_dialog("xTool Studio", "xtool studio.exe", Fake(110, 2))
+    assert is_start_page("Start Page - xTool Studio")
+    assert not is_start_page("Please select your country or region.")
+    assert should_undecorate("Start Page - xTool Studio", "xtool studio.exe", Fake(1920, 1080))
+    assert should_undecorate(
+        "Please select your country or region.", "xtool studio.exe", Fake(712, 453)
+    )
+    assert not should_undecorate("Default IME", "xtool studio.exe", Fake(712, 446))
+    assert not should_undecorate("ANGLE Intermediate Window", "xtool studio.exe", Fake(1200, 800))
+
+    saved_env = {
+        key: os.environ.get(key)
+        for key in (
+            "XDG_CURRENT_DESKTOP",
+            "DESKTOP_SESSION",
+            "XDG_SESSION_DESKTOP",
+            "GNOME_SHELL_SESSION_MODE",
+            "GNOME_SETUP_DISPLAY",
+        )
+    }
+    try:
+        for key in saved_env:
+            os.environ.pop(key, None)
+        os.environ["XDG_CURRENT_DESKTOP"] = "KDE"
+        os.environ["DESKTOP_SESSION"] = "plasma"
+        assert not is_gnome_family()
+        os.environ["XDG_CURRENT_DESKTOP"] = "zorin:GNOME"
+        os.environ["DESKTOP_SESSION"] = "zorin"
+        assert is_gnome_family()
+        os.environ["XDG_CURRENT_DESKTOP"] = "ubuntu:GNOME"
+        os.environ["DESKTOP_SESSION"] = "ubuntu"
+        assert is_gnome_family()
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     if not os.environ.get("DISPLAY"):
         print("xtool-map-windows selftest: logical checks passed (no DISPLAY)", flush=True)

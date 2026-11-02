@@ -90,6 +90,46 @@ find_installed_exe() {
 		! -iname "*uninstall*.exe" ! -iname "*update*.exe" | sort | head -n 1
 }
 
+# GNOME/Mutter, Zorin, Budgie, Cinnamon. KDE/KWin is the other path.
+is_gnome_family() {
+	blob=$(printf '%s' "${XDG_CURRENT_DESKTOP-} ${DESKTOP_SESSION-} ${XDG_SESSION_DESKTOP-}" | tr '[:upper:]' '[:lower:]')
+	case "$blob" in
+		*gnome*|*zorin*|*budgie*|*cinnamon*|*unity*)
+			return 0
+			;;
+	esac
+	if [ -n "${GNOME_SHELL_SESSION_MODE-}" ] || [ -n "${GNOME_SETUP_DISPLAY-}" ]; then
+		return 0
+	fi
+	return 1
+}
+
+wine_x11_driver() {
+	WINEPREFIX="$PREFIX_DIR" wine reg add 'HKCU\Software\Wine\X11 Driver' /v "$1" /t REG_SZ /d "$2" /f >/dev/null 2>&1
+}
+
+configure_wine_x11_driver() {
+	if wine_x11_driver UseTakeFocus N; then
+		echo 'Configured Wine X11 Driver UseTakeFocus=N'
+	else
+		echo 'WARN: could not set Wine X11 Driver UseTakeFocus=N'
+	fi
+	# KWin replaces the Win32 caption. GNOME/Mutter stacks CSD on top of a
+	# framed HWND and clips the Electron menu when the display-sized Start
+	# Page is mapped. Decorated=N leaves Wine's own caption and keeps KDE as-is.
+	if is_gnome_family; then
+		if wine_x11_driver Decorated N; then
+			echo 'Configured Wine X11 Driver Decorated=N (GNOME-family compositor)'
+		else
+			echo 'WARN: could not set Wine X11 Driver Decorated=N'
+		fi
+	elif wine_x11_driver Decorated Y; then
+		echo 'Configured Wine X11 Driver Decorated=Y'
+	else
+		echo 'WARN: could not set Wine X11 Driver Decorated=Y'
+	fi
+}
+
 force_software_rendering=0
 if [ -n "${XTOOL_FORCE_SOFTWARE_RENDERING:-}" ]; then
 	force_software_rendering="$XTOOL_FORCE_SOFTWARE_RENDERING"
@@ -201,14 +241,12 @@ if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/de
 		--disable-renderer-backgrounding --disable-backgrounding-occluded-windows \
 		--disable-background-timer-throttling --ignore-gpu-blocklist "$@"
 	printf 'xTool 1.9.11 Chromium flags:%s\n' " --use-gl=angle --use-angle=${angle_backend} --enable-unsafe-swiftshader --disable-direct-composition --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-background-timer-throttling --ignore-gpu-blocklist"
-	# GNOME/Mutter closes Wine dialogs that do not answer WM_TAKE_FOCUS.
-	# The country window then vanishes before Chromium can paint.
-	if WINEPREFIX="$PREFIX_DIR" wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseTakeFocus /t REG_SZ /d N /f >/dev/null 2>&1; then
-		echo 'Configured Wine X11 Driver UseTakeFocus=N'
-	else
-		echo 'WARN: could not set Wine X11 Driver UseTakeFocus=N'
-	fi
 fi
+
+# GNOME/Mutter closes Wine dialogs that do not answer WM_TAKE_FOCUS, and
+# stacks CSD on framed Electron windows. Apply before wine start so the
+# X11 driver reads the keys for this process.
+configure_wine_x11_driver
 
 start_first_run_mapper() {
 	mapper=""
