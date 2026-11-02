@@ -42,6 +42,20 @@ unset GDK_BACKEND
 unset QT_QPA_PLATFORM
 unset SDL_VIDEODRIVER
 
+# xTool Studio is Electron, not .NET. Stop Wine 11 from prompting to
+# download wine-mono / wine-gecko on first wineboot and first launch.
+case ":${WINEDLLOVERRIDES-}:" in
+	*:mscoree=*) ;;
+	*)
+		if [ -n "${WINEDLLOVERRIDES-}" ]; then
+			WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree=;mshtml="
+		else
+			WINEDLLOVERRIDES="mscoree=;mshtml="
+		fi
+		export WINEDLLOVERRIDES
+		;;
+esac
+
 is_installer_running() {
 	if command -v pgrep >/dev/null 2>&1; then
 		pgrep -af "xTool-Studio-setup\\.exe" >/dev/null 2>&1
@@ -152,9 +166,15 @@ if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/de
 	fi
 	# Wine spoofs some AMD iGPUs as old HD 5xxx cards. Chromium then leaves
 	# the GPU inactive and the country window stays black. ANGLE SwiftShader
-	# still paints that first-run UI. NVIDIA/Intel keep ANGLE GL.
+	# paints that first-run HTML. The Start Page does not; after the user
+	# confirms a country, switch to ANGLE GL.
 	angle_backend=gl
-	if [ "$force_software_rendering" != "1" ]; then
+	country_chosen=0
+	user_config="$PREFIX_DIR/drive_c/users/$USER_NAME/AppData/Roaming/xTool Studio/config.json"
+	if [ -f "$user_config" ] && grep -F '"COUNTRY_KEY"' "$user_config" >/dev/null 2>&1; then
+		country_chosen=1
+	fi
+	if [ "$force_software_rendering" != "1" ] && [ "$country_chosen" != "1" ]; then
 		for vendor_file in /sys/class/drm/card*/device/vendor; do
 			[ -r "$vendor_file" ] || continue
 			if grep -qiE '^0x1002' "$vendor_file"; then
@@ -163,6 +183,19 @@ if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/de
 				break
 			fi
 		done
+	fi
+	if [ "$country_chosen" = "1" ]; then
+		echo 'Country already chosen: using ANGLE GL for the xTool Studio Start Page'
+		if [ ! -f "$APP_HOME/gl-after-onboarding" ]; then
+			rm -rf \
+				"$PREFIX_DIR/drive_c/users/$USER_NAME/AppData/Roaming/xTool Studio/GPUCache" \
+				"$PREFIX_DIR/drive_c/users/$USER_NAME/AppData/Roaming/xTool Studio/ShaderCache" \
+				"$PREFIX_DIR/drive_c/users/$USER_NAME/AppData/Roaming/xTool Studio/DawnGraphiteCache" \
+				"$PREFIX_DIR/drive_c/users/$USER_NAME/AppData/Roaming/xTool Studio/DawnWebGPUCache" \
+				2>/dev/null || true
+			: >"$APP_HOME/gl-after-onboarding"
+			echo 'Cleared SwiftShader GPU caches before ANGLE GL'
+		fi
 	fi
 	set -- --use-gl=angle --use-angle="$angle_backend" --enable-unsafe-swiftshader --disable-direct-composition \
 		--disable-renderer-backgrounding --disable-backgrounding-occluded-windows \

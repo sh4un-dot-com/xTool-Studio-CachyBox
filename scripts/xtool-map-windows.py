@@ -4,8 +4,9 @@
 xTool 1.9.11 country/privacy/plan dialogs are patched to show:true with a normal
 frame so Wine maps a real HWND. This helper is a safety net: GNOME/Mutter may
 still unmap a Distrobox X11 client. Remap those dialogs, rewrite
-WM_CLIENT_MACHINE to the host name so GNOME does not treat them as remote, and
-leave IME/ANGLE surfaces alone.
+WM_CLIENT_MACHINE to the host name so GNOME does not treat them as remote,
+grow the client if GNOME CSD clipped Confirm, and leave IME/ANGLE/Start Page
+surfaces alone.
 
 Frameless show:true native-crashes under Wine; do not strip the window frame.
 """
@@ -36,17 +37,18 @@ from ctypes import (
 from ctypes.util import find_library
 
 MIN_W, MIN_H = 400, 300
-MAX_W, MAX_H = 1400, 1000
-SKIP_NAMES = ("ime", "angle intermediate")
+MAX_W, MAX_H = 1600, 1200
+SKIP_NAMES = ("ime", "angle intermediate", "start page")
 KEEP_NAMES = (
-    "xtool studio",
     "please select",
-    "country",
-    "region",
+    "country or region",
     "privacy",
     "improvement",
-    "start page",
+    "join xtool",
 )
+# GNOME CSD eats the framed Electron client. Grow these so Confirm is visible.
+GROW_COUNTRY = (800, 560)
+GROW_IMPROVE = (1100, 720)
 
 IsViewable = 2
 ClientMessage = 33
@@ -147,6 +149,8 @@ def _load_x11():
     lib.XGetClassHint.restype = c_int
     lib.XMapRaised.argtypes = [c_void_p, c_ulong]
     lib.XMapRaised.restype = c_int
+    lib.XResizeWindow.argtypes = [c_void_p, c_ulong, c_uint, c_uint]
+    lib.XResizeWindow.restype = c_int
     lib.XFlush.argtypes = [c_void_p]
     lib.XFlush.restype = c_int
     lib.XFree.argtypes = [c_void_p]
@@ -265,6 +269,15 @@ def is_first_run_dialog(name, cls, attrs):
     return any(keep in blob for keep in KEEP_NAMES)
 
 
+def grow_target(name):
+    blob = name.lower()
+    if "improvement" in blob or "privacy" in blob or "join xtool" in blob:
+        return GROW_IMPROVE
+    if "please select" in blob or "country or region" in blob:
+        return GROW_COUNTRY
+    return None
+
+
 def host_machine_name():
     for path in ("/run/host/etc/hostname", "/etc/hostname"):
         try:
@@ -309,6 +322,27 @@ def set_normal_state(lib, dpy, win, wm_state_atom):
     )
 
 
+def maybe_grow_window(lib, dpy, win, name, attrs, grown):
+    if win in grown:
+        return False
+    target = grow_target(name)
+    if target is None:
+        grown.add(win)
+        return False
+    tw, th = target
+    if attrs.width >= tw and attrs.height >= th:
+        grown.add(win)
+        return False
+    nw, nh = max(attrs.width, tw), max(attrs.height, th)
+    lib.XResizeWindow(dpy, win, nw, nh)
+    grown.add(win)
+    print(
+        f"xtool-map-windows: grew 0x{win:x} {attrs.width}x{attrs.height} -> {nw}x{nh} name={name!r}",
+        flush=True,
+    )
+    return True
+
+
 def reveal_window(lib, dpy, win, atoms, hostname, selected):
     root = lib.XDefaultRootWindow(dpy)
     if win not in selected:
@@ -328,14 +362,25 @@ def reveal_window(lib, dpy, win, atoms, hostname, selected):
     )
 
 
-def map_candidates(lib, dpy, atoms, hostname, seen, selected, remap_counts):
+def map_candidates(lib, dpy, atoms, hostname, seen, selected, remap_counts, retitled=None, grown=None):
+    if retitled is None:
+        retitled = set()
+    if grown is None:
+        grown = set()
     rows = []
     walk(lib, dpy, lib.XDefaultRootWindow(dpy), rows)
     newly = []
     remapped = []
+    tuned = False
     for win, name, cls, attrs in rows:
         if not is_first_run_dialog(name, cls, attrs):
             continue
+        if win not in retitled:
+            set_client_machine(lib, dpy, win, atoms["WM_CLIENT_MACHINE"], hostname)
+            retitled.add(win)
+            tuned = True
+        if maybe_grow_window(lib, dpy, win, name, attrs, grown):
+            tuned = True
         if attrs.map_state == IsViewable:
             seen[win] = "viewable"
             continue
@@ -361,7 +406,7 @@ def map_candidates(lib, dpy, atoms, hostname, seen, selected, remap_counts):
                 (1, 0, 0, 0, 0),
             )
         seen[win] = "hidden"
-    if newly or remapped:
+    if newly or remapped or tuned:
         lib.XFlush(dpy)
         lib.XSync(dpy, 0)
     return newly, remapped
@@ -421,11 +466,13 @@ def main():
     seen = {}
     selected = set()
     remap_counts = {}
+    retitled = set()
+    grown = set()
     while _running:
         if deadline is not None and time.time() >= deadline:
             break
         newly, remapped = map_candidates(
-            lib, dpy, atoms, hostname, seen, selected, remap_counts
+            lib, dpy, atoms, hostname, seen, selected, remap_counts, retitled, grown
         )
         for win, name, attrs in newly:
             print(
@@ -453,10 +500,14 @@ def selftest():
             self.width = width
             self.height = height
 
-    assert is_first_run_dialog("xTool Studio", "xtool studio.exe", Fake(712, 446))
     assert is_first_run_dialog(
         "Please select your country or region.", "xtool studio.exe", Fake(712, 453)
     )
+    assert is_first_run_dialog(
+        "Join xTool's Improvement Plan", "xtool studio.exe", Fake(1000, 600)
+    )
+    assert not is_first_run_dialog("xTool Studio", "xtool studio.exe", Fake(712, 446))
+    assert not is_first_run_dialog("Start Page - xTool Studio", "xtool studio.exe", Fake(800, 600))
     assert not is_first_run_dialog("Default IME", "xtool studio.exe", Fake(712, 446))
     assert not is_first_run_dialog("ANGLE Intermediate Window", "xtool studio.exe", Fake(1200, 800))
     assert not is_first_run_dialog("xTool Studio", "xtool studio.exe", Fake(110, 2))
@@ -473,7 +524,7 @@ def selftest():
 
     root = lib.XDefaultRootWindow(dpy)
     win = lib.XCreateSimpleWindow(dpy, root, -4000, -4000, 712, 446, 0, 0, 0)
-    lib.XStoreName(dpy, win, b"xTool Studio")
+    lib.XStoreName(dpy, win, b"Please select your country or region.")
     name_b = b"xtool studio.exe"
     cls_b = b"xtool studio.exe"
     hint = XClassHint(cast(c_char_p(name_b), c_void_p), cast(c_char_p(cls_b), c_void_p))

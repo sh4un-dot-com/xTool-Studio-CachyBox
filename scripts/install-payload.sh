@@ -151,13 +151,18 @@ xtool_patch_electron_startup() {
     launch_frame_new_count="$(xtool_count_literal "$launch_frame_new" "$app_asar")"
     launch_transparent_old_count="$(xtool_count_literal "$launch_transparent_old" "$app_asar")"
     launch_transparent_new_count="$(xtool_count_literal "$launch_transparent_new" "$app_asar")"
+    max_old='maximizable:!1,minimizable:!1,alwaysOnTop:!1,modal:!1,show:!0,frame:!0,movable:!0,webPreferences:{nodeIntegration:!0,contextIsolation:!1,webSecurity:!1}'
+    improve_old='width:se.width,height:se.height,center:!0,resizable:!1'
+    max_old_count="$(xtool_count_literal "$max_old" "$app_asar")"
+    improve_old_count="$(xtool_count_literal "$improve_old" "$app_asar")"
     wine_major="$(xtool_wine_major)"
 
     if [ "$isolation_old_count" -eq 0 ] && [ "$gate_hidden_count" -eq 0 ] && \
        [ "$gate_shown_frameless_count" -eq 0 ] && \
        [ "$launch_frame_old_count" -eq 0 ] && [ "$launch_transparent_old_count" -eq 0 ]; then
         if [ "$wine_major" -ge 10 ] 2>/dev/null; then
-            if [ "$gate_framed_count" -eq 0 ] && { [ "$gate_shown_count" -gt 0 ] || \
+            if [ "$gate_framed_count" -eq 0 ] && [ "$max_old_count" -eq 0 ] && \
+               [ "$improve_old_count" -eq 0 ] && { [ "$gate_shown_count" -gt 0 ] || \
                [ "$launch_frame_new_count" -gt 0 ] || [ "$launch_transparent_new_count" -gt 0 ]; }; then
                 echo "xTool Electron first-run window patch is already applied"
                 return 0
@@ -167,7 +172,8 @@ xtool_patch_electron_startup() {
                 return 0
             fi
         else
-            if [ "$gate_shown_count" -eq 0 ] && { [ "$gate_framed_count" -gt 0 ] || \
+            if [ "$gate_shown_count" -eq 0 ] && [ "$max_old_count" -eq 0 ] && \
+               [ "$improve_old_count" -eq 0 ] && { [ "$gate_framed_count" -gt 0 ] || \
                [ "$launch_frame_new_count" -gt 0 ] || [ "$launch_transparent_new_count" -gt 0 ]; }; then
                 echo "xTool Electron first-run window patch is already applied"
                 return 0
@@ -212,6 +218,31 @@ xtool_patch_electron_startup() {
     fi
     if [ "$(xtool_count_literal "$gate_shown" "$temp_asar")" -ne "$gate_shown_count" ] || \
        [ "$(xtool_count_literal "$gate_framed" "$temp_asar")" -ne "$gate_framed_count" ]; then
+        applied=1
+    fi
+
+    # GNOME CSD sits outside Electron's frame:true size, so Confirm and the
+    # improvement-plan copy clip. Allow maximize/resize; the mapper also
+    # grows those dialogs.
+    max_old='maximizable:!1,minimizable:!1,alwaysOnTop:!1,modal:!1,show:!0,frame:!0,movable:!0,webPreferences:{nodeIntegration:!0,contextIsolation:!1,webSecurity:!1}'
+    max_new='maximizable:!0,minimizable:!1,alwaysOnTop:!1,modal:!1,show:!0,frame:!0,movable:!0,webPreferences:{nodeIntegration:!0,contextIsolation:!1,webSecurity:!1}'
+    max_count="$(xtool_count_literal "$max_old" "$temp_asar")"
+    if [ "$max_count" -eq 2 ] || [ "$max_count" -eq 3 ]; then
+        echo "Applying xTool first-run maximize patch ($max_count windows)"
+        if ! xtool_replace_same_length "$temp_asar" "$max_old" "$max_new" "$max_count"; then
+            rm -f "$temp_asar"
+            return 1
+        fi
+        applied=1
+    fi
+    improve_old='width:se.width,height:se.height,center:!0,resizable:!1'
+    improve_new='width:se.width,height:se.height,center:!0,resizable:!0'
+    if [ "$(xtool_count_literal "$improve_old" "$temp_asar")" -eq 1 ]; then
+        echo 'Applying xTool improvement-plan resize patch'
+        if ! xtool_replace_same_length "$temp_asar" "$improve_old" "$improve_new" 1; then
+            rm -f "$temp_asar"
+            return 1
+        fi
         applied=1
     fi
 
@@ -270,6 +301,17 @@ xtool_upgrade_prefix() {
         echo "Updating existing Wine prefix for $ver"
     fi
     mkdir -p "$prefix_dir"
+    # Electron does not need .NET or Gecko. Keep wineboot from prompting.
+    case ":${WINEDLLOVERRIDES-}:" in
+        *:mscoree=*) ;;
+        *)
+            if [ -n "${WINEDLLOVERRIDES-}" ]; then
+                export WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree=;mshtml="
+            else
+                export WINEDLLOVERRIDES="mscoree=;mshtml="
+            fi
+            ;;
+    esac
     if command -v wineboot >/dev/null 2>&1; then
         WINEPREFIX="$prefix_dir" WINEDEBUG=-all wineboot -u || {
             echo "WARN: wineboot -u failed for $prefix_dir" >&2
