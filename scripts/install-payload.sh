@@ -61,20 +61,43 @@ xtool_replace_same_length() {
     return 0
 }
 
+# Electron 36 BrowserWindow.show() native-crashes under Wine 9, including
+# framed windows. Wine 10+ can ShowWindow a framed dialog. Ubuntu 24.04's
+# distro wine is 9.0; WineHQ stable is 11.x.
+xtool_wine_major() {
+    local ver major
+    ver="$(command -v wine >/dev/null 2>&1 && wine --version 2>/dev/null || true)"
+    major="$(printf '%s\n' "$ver" | sed -n 's/^wine-\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+    if [ -z "$major" ]; then
+        printf '0\n'
+    else
+        printf '%s\n' "$major"
+    fi
+}
+
 xtool_patch_gate_frames() {
     local file="$1"
     local suffix='movable:!0,webPreferences:{nodeIntegration:!0,contextIsolation:!1,webSecurity:!1}'
+    local hidden="show:!1,frame:!1,${suffix}"
     local framed="show:!1,frame:!0,${suffix}"
-    local from count
+    local shown="show:!0,frame:!0,${suffix}"
+    local shown_frameless="show:!0,frame:!1,${suffix}"
+    local wine_major desired from count
     local applied_here=0
 
-    # Constructor show:true native-crashes under Wine. Keep the windows hidden
-    # until did-finish-load, but give them a normal frame so XWayland maps them.
-    for from in \
-        "show:!1,frame:!1,${suffix}" \
-        "show:!0,frame:!0,${suffix}" \
-        "show:!0,frame:!1,${suffix}"
-    do
+    wine_major="$(xtool_wine_major)"
+    if [ "$wine_major" -ge 10 ] 2>/dev/null; then
+        desired="$shown"
+        echo "Wine $(wine --version 2>/dev/null || echo "$wine_major") can show framed Electron windows"
+        set -- "$hidden" "$framed" "$shown_frameless"
+    else
+        desired="$framed"
+        echo "Wine $(wine --version 2>/dev/null || echo "$wine_major") crashes Electron show(); keeping first-run windows hidden+framed"
+        set -- "$hidden" "$shown" "$shown_frameless"
+    fi
+
+    for from in "$@"; do
+        [ "$from" = "$desired" ] && continue
         count="$(xtool_count_literal "$from" "$file")"
         if [ "$count" -eq 0 ]; then
             continue
@@ -83,8 +106,8 @@ xtool_patch_gate_frames() {
             echo "WARN: xTool first-run window frame signature matched $count copies; leaving those bytes unchanged" >&2
             continue
         fi
-        echo "Applying xTool first-run window frame patch ($count windows)"
-        if ! xtool_replace_same_length "$file" "$from" "$framed" "$count"; then
+        echo "Applying xTool first-run window show patch ($count windows)"
+        if ! xtool_replace_same_length "$file" "$from" "$desired" "$count"; then
             return 1
         fi
         applied_here=1
@@ -112,7 +135,7 @@ xtool_patch_electron_startup() {
     local isolation_old_count gate_hidden_count gate_shown_count gate_shown_frameless_count
     local gate_framed_count launch_frame_old_count launch_frame_new_count
     local launch_transparent_old_count launch_transparent_new_count
-    local before_size after_size temp_asar applied=0
+    local before_size after_size temp_asar applied=0 wine_major
 
     if [ ! -f "$app_asar" ]; then
         echo "Missing xTool Studio Electron archive: $app_asar" >&2
@@ -128,17 +151,32 @@ xtool_patch_electron_startup() {
     launch_frame_new_count="$(xtool_count_literal "$launch_frame_new" "$app_asar")"
     launch_transparent_old_count="$(xtool_count_literal "$launch_transparent_old" "$app_asar")"
     launch_transparent_new_count="$(xtool_count_literal "$launch_transparent_new" "$app_asar")"
+    wine_major="$(xtool_wine_major)"
 
     if [ "$isolation_old_count" -eq 0 ] && [ "$gate_hidden_count" -eq 0 ] && \
-       [ "$gate_shown_count" -eq 0 ] && [ "$gate_shown_frameless_count" -eq 0 ] && \
+       [ "$gate_shown_frameless_count" -eq 0 ] && \
        [ "$launch_frame_old_count" -eq 0 ] && [ "$launch_transparent_old_count" -eq 0 ]; then
-        if [ "$gate_framed_count" -gt 0 ] || [ "$launch_frame_new_count" -gt 0 ] || \
-           [ "$launch_transparent_new_count" -gt 0 ]; then
-            echo "xTool Electron first-run window patch is already applied"
+        if [ "$wine_major" -ge 10 ] 2>/dev/null; then
+            if [ "$gate_framed_count" -eq 0 ] && { [ "$gate_shown_count" -gt 0 ] || \
+               [ "$launch_frame_new_count" -gt 0 ] || [ "$launch_transparent_new_count" -gt 0 ]; }; then
+                echo "xTool Electron first-run window patch is already applied"
+                return 0
+            fi
+            if [ "$gate_framed_count" -eq 0 ] && [ "$gate_shown_count" -eq 0 ]; then
+                echo 'WARN: xTool Electron first-run window signature was not found; leaving app.asar unchanged' >&2
+                return 0
+            fi
         else
-            echo 'WARN: xTool Electron first-run window signature was not found; leaving app.asar unchanged' >&2
+            if [ "$gate_shown_count" -eq 0 ] && { [ "$gate_framed_count" -gt 0 ] || \
+               [ "$launch_frame_new_count" -gt 0 ] || [ "$launch_transparent_new_count" -gt 0 ]; }; then
+                echo "xTool Electron first-run window patch is already applied"
+                return 0
+            fi
+            if [ "$gate_framed_count" -eq 0 ] && [ "$gate_shown_count" -eq 0 ]; then
+                echo 'WARN: xTool Electron first-run window signature was not found; leaving app.asar unchanged' >&2
+                return 0
+            fi
         fi
-        return 0
     fi
 
     if ! command -v perl >/dev/null 2>&1; then
@@ -167,13 +205,13 @@ xtool_patch_electron_startup() {
     fi
 
     # 1.9.11 first-run country/privacy/plan windows start hidden and frameless.
-    # Wine on XWayland does not map those WS_POPUP windows. A normal frame lets
-    # the compositor map them after did-finish-load. show:true crashes natively.
+    # Wine 10+ can ShowWindow a framed dialog. Wine 9 native-crashes on show().
     if ! xtool_patch_gate_frames "$temp_asar"; then
         rm -f "$temp_asar"
         return 1
     fi
-    if [ "$(xtool_count_literal "$gate_framed" "$temp_asar")" -gt "$gate_framed_count" ]; then
+    if [ "$(xtool_count_literal "$gate_shown" "$temp_asar")" -ne "$gate_shown_count" ] || \
+       [ "$(xtool_count_literal "$gate_framed" "$temp_asar")" -ne "$gate_framed_count" ]; then
         applied=1
     fi
 
@@ -280,9 +318,8 @@ xtool_install_payload() {
     fi
 
     # xTool 1.9.11 first-run country/privacy/plan windows start hidden and
-    # frameless. Wine on XWayland does not map those WS_POPUP windows, so the
-    # process runs with no UI. Keep them hidden (show:true native-crashes) but
-    # give them a normal frame. Keep contextIsolation off so country-select.html
-    # can use window.require('electron'). This rerun is safe on existing prefixes.
+    # frameless. Wine 10+ gets a normal frame plus show:true. Wine 9 keeps
+    # them hidden+framed because show() native-crashes. Keep contextIsolation
+    # off so country-select.html can use window.require('electron').
     xtool_patch_electron_startup "$app_install_dir/resources/app.asar"
 }

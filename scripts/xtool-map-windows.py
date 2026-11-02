@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""Map hidden xTool Studio first-run windows on X11/XWayland.
+"""Map xTool Studio first-run windows on X11/XWayland if the compositor hides them.
 
-xTool 1.9.11 creates the country, privacy, and plan windows hidden. Under Wine
-the renderer never reaches did-finish-load, so the app never calls show().
-Mapping those dialogs from X11 gives Chromium a drawable. BrowserWindow.show()
-at construction native-crashes under Wine, so this helper maps after the HWND
-exists.
+xTool 1.9.11 country/privacy/plan dialogs are patched to show:true with a normal
+frame so Wine maps a real HWND. This helper is a safety net: GNOME/Mutter may
+still unmap a Distrobox X11 client. Remap those dialogs, rewrite
+WM_CLIENT_MACHINE to the host name so GNOME does not treat them as remote, and
+leave IME/ANGLE surfaces alone.
 
-Wine and GNOME/Mutter may unmap the window again while the Win32 HWND is still
-hidden. Keep remapping until Electron show() runs. Distrobox X11 clients often
-advertise the container hostname; GNOME then treats the dialog as a remote
-window, so WM_CLIENT_MACHINE is rewritten to the host name.
-
-Only first-run sized dialogs are mapped. Tiny IME windows and the large ANGLE
-intermediate surface are left alone.
+Frameless show:true native-crashes under Wine; do not strip the window frame.
 """
 from __future__ import annotations
 

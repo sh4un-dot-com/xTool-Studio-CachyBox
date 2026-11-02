@@ -128,6 +128,13 @@ if [ -z "$APP_EXE" ]; then
 fi
 
 printf 'Using executable: %s\n' "$APP_EXE"
+wine_ver="$(WINEPREFIX="$PREFIX_DIR" wine --version 2>/dev/null || echo unknown)"
+printf 'Wine: %s\n' "$wine_ver"
+case "$wine_ver" in
+	wine-[0-9].*|wine-9.*)
+		echo 'WARN: Wine 9 native-crashes when xTool Studio 1.9.11 shows the country window; rerun ./install.sh so the container can install WineHQ 11'
+		;;
+esac
 
 # xTool Studio 1.9.11 (Chromium 136) defaults to DirectComposition on Windows.
 # Wine's dcomp is unimplemented, the GPU process dies, and the first-run
@@ -158,6 +165,13 @@ if [ -f "$APP_ASAR" ] && grep -F -- 'createCountrySelectWindow' "$APP_ASAR" >/de
 		--disable-renderer-backgrounding --disable-backgrounding-occluded-windows \
 		--disable-background-timer-throttling --ignore-gpu-blocklist "$@"
 	printf 'xTool 1.9.11 Chromium flags:%s\n' " --use-gl=angle --use-angle=${angle_backend} --enable-unsafe-swiftshader --disable-direct-composition --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-background-timer-throttling --ignore-gpu-blocklist"
+	# GNOME/Mutter closes Wine dialogs that do not answer WM_TAKE_FOCUS.
+	# The country window then vanishes before Chromium can paint.
+	if WINEPREFIX="$PREFIX_DIR" wine reg add 'HKCU\Software\Wine\X11 Driver' /v UseTakeFocus /t REG_SZ /d N /f >/dev/null 2>&1; then
+		echo 'Configured Wine X11 Driver UseTakeFocus=N'
+	else
+		echo 'WARN: could not set Wine X11 Driver UseTakeFocus=N'
+	fi
 fi
 
 start_first_run_mapper() {
