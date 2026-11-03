@@ -27,7 +27,9 @@ SOFTWARE.
 
 This repository is based on MIT-licensed container tooling originally authored by Sascha Schüller.
 
-Akita Engineering adapted that work for a later proprietary-app workflow, and this fork continues that automation approach while retargeting the runtime to xTool Studio.
+[Akita Engineering](https://www.akitaengineering.com) adapted that work for a later proprietary-app workflow, and this fork continues that automation approach while retargeting the runtime to xTool Studio.
+
+Project site: [www.akitaengineering.com](https://www.akitaengineering.com)
 
 ---
 

@@ -234,3 +234,7 @@ The automation code in this repository is provided under the MIT License.
 xTool Studio itself is proprietary software owned by xTool and is not redistributed under the repository license.
 
 See `LICENSE.md` for details.
+
+---
+
+A project of [Akita Engineering](https://www.akitaengineering.com). More in [`docs/attribution.md`](docs/attribution.md).
